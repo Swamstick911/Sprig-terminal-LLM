@@ -6,3 +6,6 @@ Cargo.lock
 
 # Generated prediction data emitted by tools/dict-builder
 dict_data.rs
+
+# Generated firmware images
+*.uf2
