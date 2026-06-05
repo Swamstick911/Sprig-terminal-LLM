@@ -90,6 +90,17 @@ impl Keyboard {
         self.action_armed
     }
 
+    /// While picking a letter, the active group's letters mapped onto the left
+    /// pad in order (index 0 → W, 1 → A, 2 → S, 3 → D). `None` in compose state.
+    ///
+    /// The renderer uses this to show the "pick a letter" step.
+    pub fn active_group(&self) -> Option<&'static str> {
+        match self.state {
+            State::Letter(g) => Some(layout::GROUPS[g]),
+            State::Compose => None,
+        }
+    }
+
     /// Process one key event, returning what the app should do.
     pub fn process(&mut self, ev: KeyEvent, predictor: &dyn Predictor) -> Outcome {
         if self.action_armed {
@@ -338,6 +349,17 @@ mod tests {
         tap(&mut k, S, &p);
         tap(&mut k, I, &p); // accept candidate 0 → must no-op, not corrupt
         assert_eq!(k.text(), before.as_str());
+    }
+
+    #[test]
+    fn active_group_reflects_state() {
+        let p = StaticPredictor::new(&[]);
+        let mut k = Keyboard::new();
+        assert_eq!(k.active_group(), None);
+        tap(&mut k, A, &p); // enter letter state for group "efgh"
+        assert_eq!(k.active_group(), Some("efgh"));
+        tap(&mut k, D, &p); // commit 'h' → back to compose
+        assert_eq!(k.active_group(), None);
     }
 
     #[test]
