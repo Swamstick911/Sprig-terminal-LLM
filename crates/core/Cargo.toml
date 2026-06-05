@@ -1,0 +1,9 @@
+[package]
+name = "sprig-llm-core"
+version = "0.1.0"
+edition = "2021"
+description = "Host-testable no_std core for the Sprig Pocket LLM Terminal: twin-pad keyboard, prediction, SSE/provider parsing."
+license = "MIT"
+
+[dependencies]
+heapless = "0.8"

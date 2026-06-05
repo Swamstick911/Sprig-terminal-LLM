@@ -1,0 +1,6 @@
+[workspace]
+resolver = "2"
+members = ["crates/core"]
+
+# Firmware (Embassy, thumbv6m) is added as a member once Milestone 1 lands;
+# it builds only for the device target, so it is kept out of the host test build.
