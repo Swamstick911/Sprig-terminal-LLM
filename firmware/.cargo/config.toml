@@ -1,0 +1,32 @@
+# Cargo configuration for the RP2040 firmware build.
+
+[build]
+# RP2040 is a dual Cortex-M0+ (ARMv6-M). All firmware builds target this triple.
+target = "thumbv6m-none-eabi"
+
+[target.thumbv6m-none-eabi]
+# `runner` is invoked by `cargo run`. Two common paths:
+#
+#   1. probe-rs (SWD debug probe, e.g. a second Pico flashed as a debug probe,
+#      or a Picoprobe). This is the recommended dev loop — it gives RTT logs.
+#      Install: `cargo install probe-rs-tools` then use the line below.
+#
+#   2. elf2uf2-rs (no probe; drag-and-drop over USB mass storage / BOOTSEL).
+#      Install: `cargo install elf2uf2-rs`, hold BOOTSEL while plugging in,
+#      then `cargo run --release` flashes over the RPI-RP2 drive.
+#
+# Default to probe-rs; swap the comment to use the UF2 path.
+runner = "probe-rs run --chip RP2040"
+# runner = "elf2uf2-rs -d"
+
+rustflags = [
+    # defmt's RTT transport needs its linker script section.
+    "-C", "link-arg=-Tdefmt.x",
+    # cortex-m-rt's link.x pulls in our memory.x (see build.rs).
+    "-C", "link-arg=--nmagic",
+    "-C", "link-arg=-Tlink.x",
+]
+
+[env]
+# defmt log level at build time. Lower to "info" or "warn" to shrink the image.
+DEFMT_LOG = "debug"

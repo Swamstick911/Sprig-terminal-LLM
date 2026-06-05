@@ -1,0 +1,170 @@
+//! Sprig Pocket LLM Terminal — Milestone 1 firmware entry point.
+//!
+//! Boots the RP2040, brings up the ST7735 LCD, configures the eight buttons,
+//! and runs the twin-pad keyboard from `sprig-llm-core`, redrawing the screen
+//! whenever the keyboard reports a visible change.
+//!
+//! Milestone 1 deliberately stops at on-device text composition: `Send` and
+//! `Expand` outcomes only flash a status banner. WiFi/TLS and the actual LLM
+//! request/stream land in Milestone 2.
+//!
+//! Architecture:
+//!   * [`input`]  — debounced GPIO scanning → `KeyEvent`s.
+//!   * [`display`] — ST7735 driver + four-zone embedded-graphics renderer.
+//!   * [`pins`]   — the verified Sprig pinout.
+//!   * core crate — the `Keyboard` state machine + `Predictor`.
+
+#![no_std]
+#![no_main]
+
+mod display;
+mod input;
+mod pins;
+
+use defmt::info;
+use embassy_executor::Spawner;
+use embassy_rp::gpio::{AnyPin, Level, Output, Pin};
+use embassy_rp::spi::{self, Spi};
+use embassy_time::{Delay, Duration, Timer};
+use embedded_hal_bus::spi::ExclusiveDevice;
+use st7735_lcd::{Orientation, ST7735};
+
+use sprig_llm_core::keyboard::{Keyboard, Outcome};
+use sprig_llm_core::predict::StaticPredictor;
+
+use crate::display::Ui;
+use crate::input::Buttons;
+
+// Pull in the RTT logger transport and the defmt panic handler. These are only
+// linked for their side effects.
+use defmt_rtt as _;
+use panic_probe as _;
+
+/// A tiny on-device word list for Milestone 1 prediction. The real device will
+/// memory-map a trie/bigram model from flash (see core::predict docs); this is
+/// enough to exercise the prediction row and the right-pad accept path.
+const SEED_WORDS: &[&str] = &[
+    "the", "and", "you", "that", "this", "have", "with", "hello", "help",
+    "hi", "there", "what", "when", "where", "who", "why", "how", "yes", "no",
+    "please", "thanks", "message", "send", "expand", "world", "sprig",
+];
+
+/// SPI clock for the ST7735. The panel is comfortable well past this; 32 MHz is
+/// a safe, fast default for a short PCB trace.
+const SPI_HZ: u32 = 32_000_000;
+
+#[embassy_executor::main]
+async fn main(_spawner: Spawner) {
+    // Bring up clocks, power, and the GPIO/peripheral singletons.
+    let p = embassy_rp::init(Default::default());
+    info!("sprig-llm-firmware: boot (Milestone 1)");
+
+    // --- Display SPI bus (SPI0: SCK=18, MOSI=19, MISO=16). ---
+    // The pin *constants* in `pins` document the wiring; the embassy `p.PIN_xx`
+    // singletons below must match those numbers.
+    let mut spi_cfg = spi::Config::default();
+    spi_cfg.frequency = SPI_HZ;
+    let spi = Spi::new_blocking(
+        p.SPI0,
+        p.PIN_18, // SCK   (pins::display::SCK)
+        p.PIN_19, // MOSI  (pins::display::MOSI)
+        p.PIN_16, // MISO  (pins::display::MISO, unused by the panel)
+        spi_cfg,
+    );
+
+    // Control lines for the ST7735.
+    let dc = Output::new(p.PIN_22, Level::Low); // pins::display::DC
+    let rst = Output::new(p.PIN_26, Level::Low); // pins::display::RST
+    let cs = Output::new(p.PIN_20, Level::High); // pins::display::CS (idle high)
+    // Backlight on.
+    let _backlight = Output::new(p.PIN_17, Level::High); // pins::display::BACKLIGHT
+
+    // `st7735-lcd` 0.10 wants an embedded-hal `SpiDevice` (CS managed per
+    // transaction). Wrap our raw blocking bus + CS pin in an ExclusiveDevice.
+    // It is `.unwrap()`-free: ExclusiveDevice::new only fails if CS can't be set
+    // idle, which an infallible RP2040 output never does — use `new_no_delay`
+    // since the ST7735 driver inserts its own timing.
+    let mut delay = Delay;
+    let spi_dev = ExclusiveDevice::new_no_delay(spi, cs)
+        .expect("CS pin is infallible");
+
+    // ST7735: RGB order true, not color-inverted, 160x128.
+    let mut lcd = ST7735::new(spi_dev, dc, rst, true, false, display::WIDTH, display::HEIGHT);
+    // `init`/`set_orientation` return Err(()) on bus error; on a soldered panel
+    // this should not fail. We surface it via defmt and keep going so the input
+    // path is still exercised on the bench.
+    if lcd.init(&mut delay).is_err() {
+        defmt::error!("ST7735 init failed");
+    }
+    if lcd.set_orientation(&Orientation::Landscape).is_err() {
+        defmt::error!("ST7735 set_orientation failed");
+    }
+
+    if Ui::clear(&mut lcd).is_err() {
+        defmt::error!("display clear failed");
+    }
+
+    // --- Buttons (W=5 A=6 S=7 D=8 I=12 J=13 K=14 L=15), in input::SCAN_ORDER. ---
+    let raw: [AnyPin; 8] = [
+        p.PIN_5.degrade(),  // W
+        p.PIN_6.degrade(),  // A
+        p.PIN_7.degrade(),  // S
+        p.PIN_8.degrade(),  // D
+        p.PIN_12.degrade(), // I
+        p.PIN_13.degrade(), // J
+        p.PIN_14.degrade(), // K
+        p.PIN_15.degrade(), // L
+    ];
+    let mut buttons = Buttons::new(input::configure(raw));
+
+    // --- Core keyboard + predictor. ---
+    let predictor = StaticPredictor::new(SEED_WORDS);
+    let mut kb = Keyboard::new();
+    let mut status: display::Status = display::Status::new();
+
+    // Initial paint.
+    let _ = Ui::render(&mut lcd, &kb, &status);
+
+    // --- Main loop: scan → feed core → redraw on change. ---
+    let tick = Duration::from_millis(input::TICK_MS);
+    loop {
+        // Collect this tick's events first (the closure can't borrow `kb` while
+        // `buttons` is borrowed), then process them.
+        let mut events: heapless::Vec<sprig_llm_core::button::KeyEvent, 8> =
+            heapless::Vec::new();
+        buttons.poll(|ev| {
+            let _ = events.push(ev);
+        });
+
+        let mut dirty = false;
+        for ev in events {
+            match kb.process(ev, &predictor) {
+                Outcome::Idle => {}
+                Outcome::Redraw => {
+                    status.clear();
+                    dirty = true;
+                }
+                Outcome::Send => {
+                    // Milestone 2 will open the TLS connection and stream the
+                    // reply here. For now, just acknowledge on the status bar.
+                    status.clear();
+                    let _ = status.push_str("SEND (M2 todo)");
+                    info!("Send requested; draft len={}", kb.text().len());
+                    dirty = true;
+                }
+                Outcome::Expand => {
+                    status.clear();
+                    let _ = status.push_str("EXPAND (M2 todo)");
+                    info!("Expand requested; draft len={}", kb.text().len());
+                    dirty = true;
+                }
+            }
+        }
+
+        if dirty {
+            let _ = Ui::render(&mut lcd, &kb, &status);
+        }
+
+        Timer::after(tick).await;
+    }
+}

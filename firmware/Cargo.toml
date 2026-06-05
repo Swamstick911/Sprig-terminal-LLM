@@ -1,0 +1,106 @@
+# Firmware for the Sprig Pocket LLM Terminal — Milestone 1.
+#
+# This crate builds ONLY for the device target (thumbv6m-none-eabi / RP2040).
+# It is deliberately kept out of the workspace's default test build; see the
+# repo-root Cargo.toml note. To add it to the workspace, see firmware/README.md.
+#
+# Milestone 1: board bring-up, ST7735 LCD, 8-button input, twin-pad keyboard UI
+# rendered from `sprig-llm-core`. No WiFi/TLS yet (that is Milestone 2).
+
+# This empty `[workspace]` table makes `firmware` its OWN workspace, so it can
+# be built standalone (`cargo build` from this dir) without being a member of
+# the repo-root workspace — whose default `cargo test` build is host-only and
+# must not try to compile this thumbv6m-only crate. When you integrate it into
+# the root workspace later (adding it to `members` and excluding it from the
+# default test set), delete this table. See README.md "Workspace integration".
+[workspace]
+
+[package]
+name = "sprig-llm-firmware"
+version = "0.1.0"
+edition = "2021"
+description = "Embassy firmware for the Sprig Pocket LLM Terminal (RP2040 + CYW43439, ST7735 LCD, twin-pad keyboard)."
+license = "MIT"
+
+[[bin]]
+name = "sprig-llm-firmware"
+test = false
+bench = false
+
+[dependencies]
+# --- The hardware-free core logic (twin-pad keyboard, prediction). ---
+sprig-llm-core = { path = "../crates/core" }
+
+# --- Embassy async runtime + RP2040 HAL. ---
+# Pinned to recent (2024/2025-era) releases that are mutually compatible.
+embassy-executor = { version = "0.6", features = [
+    "arch-cortex-m",
+    "executor-thread",
+    "integrated-timers",
+    "task-arena-size-32768",
+] }
+# embassy-rp 0.2 is RP2040-only (no `rp2040` chip-select feature; that arrived
+# with RP2350 support in 0.3+). `boot2-w25q080` selects the second-stage
+# bootloader for the Pico's Winbond-class QSPI flash; `rt` provides the
+# cortex-m-rt interrupt vectors; `unstable-pac` is pulled by the time-driver.
+embassy-rp = { version = "0.2", features = [
+    "rt",
+    "time-driver",
+    "critical-section-impl",
+    "boot2-w25q080",
+    "defmt",
+] }
+embassy-time = { version = "0.3", features = ["tick-hz-1_000_000"] }
+embassy-sync = "0.6"
+embassy-futures = "0.1"
+
+# --- embedded-hal traits (SPI/GPIO abstraction the display driver needs). ---
+embedded-hal = "1.0"
+# `ExclusiveDevice` adapts our raw blocking SpiBus + CS pin into the `SpiDevice`
+# that `st7735-lcd` 0.10 expects (it manages CS around each transaction).
+embedded-hal-bus = "0.2"
+
+# Fixed-capacity collections, shared with the core crate (no allocator on the
+# device). Used here for the per-tick event buffer.
+heapless = "0.8"
+
+# The Cortex-M0+ (thumbv6m) has no native atomic compare-exchange. embedded-hal-
+# bus pulls `portable-atomic`, which needs a CAS strategy: route it through
+# `critical-section` (embassy-rp provides the impl via `critical-section-impl`).
+portable-atomic = { version = "1", default-features = false, features = [
+    "critical-section",
+] }
+
+# --- Display: ST7735 driver + embedded-graphics 2D toolkit. ---
+# `st7735-lcd` speaks embedded-hal 1.0 SPI + DigitalOutput and renders via
+# embedded-graphics' DrawTarget, which is exactly the surface we draw the
+# four keyboard zones onto.
+st7735-lcd = "0.10"
+embedded-graphics = "0.8"
+
+# --- Logging over RTT + panic handler that reports through defmt. ---
+defmt = "0.3"
+defmt-rtt = "0.3"
+panic-probe = { version = "0.3", features = ["print-defmt"] }
+
+# --- Cortex-M runtime glue. ---
+cortex-m = { version = "0.7", features = ["inline-asm"] }
+cortex-m-rt = "0.7"
+
+# NOTE on boot2: the RP2040 second-stage bootloader is provided by `embassy-rp`
+# (it re-exports `embassy_rp::binary_info` / a default boot2 and places it in the
+# `.boot2` section automatically when its `boot2-*` feature / default is used).
+# We rely on that rather than pulling `rp2040-boot2` directly.
+
+[profile.release]
+# Debug info is free on flash (stripped from the image) and makes defmt /
+# probe-rs backtraces useful. LTO + opt-level "s" keeps the image small.
+debug = 2
+lto = true
+opt-level = "s"
+overflow-checks = true
+
+[profile.dev]
+# `opt-level = 1` keeps Embassy/embedded-graphics from being unusably slow in
+# debug builds while remaining quick to compile.
+opt-level = 1
