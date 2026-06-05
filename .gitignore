@@ -4,8 +4,9 @@ target/
 Cargo.lock
 .DS_Store
 
-# Generated prediction data emitted by tools/dict-builder
-dict_data.rs
+# Scratch output from running tools/dict-builder in its own directory
+# (the firmware's generated dict_data.rs IS committed as vendored data)
+/tools/dict-builder/dict_data.rs
 
 # Generated firmware images
 *.uf2
