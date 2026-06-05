@@ -196,10 +196,10 @@ impl Ui {
         let cells = [("W", 0usize), ("A", 1), ("S", 2), ("D", 3)];
         // (x, y) for up / left / down / right within the guide band.
         let pos = [
-            (68, GUIDE_TOP + 1),  // W (up)
-            (4, GUIDE_TOP + 13),  // A (left)
-            (68, GUIDE_TOP + 25), // S (down)
-            (120, GUIDE_TOP + 13), // D (right)
+            (68, GUIDE_TOP),       // W (up)
+            (4, GUIDE_TOP + 11),   // A (left)
+            (68, GUIDE_TOP + 22),  // S (down)
+            (120, GUIDE_TOP + 11), // D (right)
         ];
         for (i, (btn, idx)) in cells.iter().enumerate() {
             if let Some(ch) = letters.chars().nth(*idx) {
@@ -219,22 +219,22 @@ impl Ui {
         D: DrawTarget<Color = Rgb565>,
     {
         // Line 1: predictions, each tagged with its right-pad accept button.
+        // Suggestions for the current word (informational in compose: the
+        // right pad selects groups here, so we don't tag them with accept keys).
         let cands = kb.candidates();
         if cands.is_empty() {
-            Self::text(target, "type for suggestions", 2, GUIDE_TOP + 1, DIM)?;
+            Self::text(target, "type for suggestions", 2, GUIDE_TOP, DIM)?;
         } else {
-            let labels = ["I", "J", "K", "L"];
             let colw = WIDTH as i32 / 4;
             for (i, c) in cands.iter().enumerate().take(4) {
-                let mut s: String<20> = String::new();
-                let _ = write!(s, "{}:{}", labels[i], c.as_str());
-                Self::text(target, &s, i as i32 * colw + 1, GUIDE_TOP + 1, FG)?;
+                Self::text(target, c.as_str(), i as i32 * colw + 1, GUIDE_TOP, FG)?;
             }
         }
 
         // Lines 2-3: the group → button map (which button holds which letters).
-        Self::text(target, "W:abcd A:efgh S:ijkl D:mnop", 0, GUIDE_TOP + 13, DIM)?;
-        Self::text(target, "I:qrst J:uvwx K:yz.,  L=space", 0, GUIDE_TOP + 25, DIM)?;
+        // Kept under 26 glyphs wide so it never runs off the 160px panel.
+        Self::text(target, "Wabcd Aefgh Sijkl Dmnop", 0, GUIDE_TOP + 11, DIM)?;
+        Self::text(target, "Iqrst Juvwx Kyz., L=spc", 0, GUIDE_TOP + 22, DIM)?;
         Ok(())
     }
 
@@ -243,9 +243,9 @@ impl Ui {
     where
         D: DrawTarget<Color = Rgb565>,
     {
-        Self::text(target, "W=back A=send S=expand", 2, GUIDE_TOP + 1, WARN)?;
-        Self::text(target, "D=caps I=sym J=newline", 2, GUIDE_TOP + 13, WARN)?;
-        Self::text(target, "K=clear  L=cancel", 2, GUIDE_TOP + 25, WARN)?;
+        Self::text(target, "W=back A=send S=expand", 2, GUIDE_TOP, WARN)?;
+        Self::text(target, "D=caps I=sym J=newline", 2, GUIDE_TOP + 11, WARN)?;
+        Self::text(target, "K=clear  L=cancel", 2, GUIDE_TOP + 22, WARN)?;
         Ok(())
     }
 }
