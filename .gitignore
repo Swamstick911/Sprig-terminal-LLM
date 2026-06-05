@@ -1,4 +1,8 @@
-/target
+# Build output (root and any nested crate, incl. firmware/ and tools/)
+target/
 **/*.rs.bk
 Cargo.lock
 .DS_Store
+
+# Generated prediction data emitted by tools/dict-builder
+dict_data.rs

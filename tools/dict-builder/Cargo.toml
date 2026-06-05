@@ -1,0 +1,13 @@
+[package]
+name = "dict-builder"
+version = "0.1.0"
+edition = "2021"
+description = "Host-side builder that turns a word-frequency corpus into include!-able Rust prediction data for the Pocket LLM Terminal firmware (RP2040)."
+
+# std-only: no external dependencies on purpose. This binary runs on the host
+# and must stay trivial to build in CI / on the dev machine.
+[dependencies]
+
+[[bin]]
+name = "dict-builder"
+path = "src/main.rs"

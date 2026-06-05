@@ -1,0 +1,122 @@
+# sample-words.txt — sample corpus for dict-builder.
+# Unigram lines:  word<TAB>frequency
+# Bigram lines:   word1<TAB>word2<TAB>frequency  (head must also appear as a unigram)
+# Lines starting with '#' and blank lines are ignored. Frequencies are illustrative.
+
+the	229000
+of	131000
+and	116000
+a	98000
+to	88000
+in	86000
+is	58000
+you	56000
+that	53000
+it	50000
+he	48000
+was	46000
+for	44000
+on	42000
+are	40000
+as	38000
+with	36000
+his	35000
+they	34000
+i	33000
+at	32000
+be	31000
+this	30000
+have	29000
+from	28000
+or	27000
+one	26000
+had	25000
+by	24000
+word	23000
+but	22000
+not	21000
+what	20000
+all	19000
+were	18000
+we	17000
+when	16000
+your	15000
+can	14000
+said	13000
+there	12000
+use	11000
+an	10000
+each	9000
+which	8500
+she	8000
+do	7500
+how	7000
+their	6500
+if	6000
+will	5500
+up	5000
+other	4800
+about	4600
+out	4400
+many	4200
+then	4000
+them	3800
+these	3600
+so	3400
+some	3200
+her	3000
+would	2800
+make	2600
+like	2400
+him	2200
+into	2000
+time	1900
+has	1800
+look	1700
+two	1600
+more	1500
+write	1400
+go	1300
+see	1200
+number	1100
+no	1000
+way	950
+could	900
+people	850
+my	800
+than	750
+first	700
+water	650
+been	600
+call	550
+who	500
+now	450
+find	400
+long	350
+down	300
+day	250
+did	200
+get	180
+come	160
+made	140
+may	120
+part	100
+
+# Bigram followers for a few common heads.
+the	people	900
+the	first	700
+the	water	650
+the	time	600
+the	way	550
+of	the	5000
+of	a	1200
+to	the	3000
+to	be	1500
+to	make	800
+i	have	900
+i	am	850
+i	will	700
+i	think	600
+you	are	800
+you	can	750
+you	have	500
