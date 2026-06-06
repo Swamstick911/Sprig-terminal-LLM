@@ -42,7 +42,7 @@ use sprig_llm_core::provider::Role;
 use crate::audio::Audio;
 use crate::display::Ui;
 use crate::input::Buttons;
-use crate::net::{Net, NetPins};
+use crate::net::{Net, NetError, NetPins};
 
 use core::fmt::Write as _;
 use heapless::String as HString;
@@ -528,26 +528,47 @@ where
         let _ = turns.push((*role, text.as_str()));
     }
 
-    let mut acc: HString<RESPONSE_CAP> = HString::new();
-    let _ = Ui::response(lcd, "Streaming...", "");
     net.set_led(true).await;
+    let mut acc: HString<RESPONSE_CAP> = HString::new();
 
-    let result = net
-        .send_chat(
-            settings.model(),
-            settings.max_tokens(),
-            settings.persona(),
-            &turns,
-            |delta| {
-                for ch in delta.chars() {
-                    if acc.push(ch).is_err() {
-                        break;
+    // Retry a transient connect/TLS failure (Transport) a couple of times — but
+    // only while nothing has streamed yet, so we never duplicate partial text.
+    const MAX_ATTEMPTS: u8 = 3;
+    let mut attempt: u8 = 0;
+    let result = loop {
+        attempt += 1;
+        acc.clear();
+        let mut got_delta = false;
+        let _ = Ui::response(
+            lcd,
+            if attempt == 1 { "Streaming..." } else { "Retrying..." },
+            "",
+        );
+        let r = net
+            .send_chat(
+                settings.model(),
+                settings.max_tokens(),
+                settings.persona(),
+                &turns,
+                |delta| {
+                    got_delta = true;
+                    for ch in delta.chars() {
+                        if acc.push(ch).is_err() {
+                            break;
+                        }
                     }
-                }
-                let _ = Ui::response(lcd, "Streaming...", &acc);
-            },
-        )
-        .await;
+                    let _ = Ui::response(lcd, "Streaming...", &acc);
+                },
+            )
+            .await;
+        match r {
+            Err(NetError::Transport) if !got_delta && attempt < MAX_ATTEMPTS => {
+                Timer::after(Duration::from_millis(600)).await;
+                continue;
+            }
+            other => break other,
+        }
+    };
 
     net.set_led(false).await;
 
