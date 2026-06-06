@@ -70,6 +70,52 @@ impl LlmProvider for Claude<'_> {
     }
 }
 
+/// OpenRouter (OpenAI-compatible chat completions). Lets the terminal reach
+/// many models — e.g. `deepseek/deepseek-chat` — through one endpoint. Auth is
+/// `Authorization: Bearer <key>` (set by the network layer), not `x-api-key`.
+pub struct OpenRouter<'a> {
+    pub model: &'a str,
+    pub max_tokens: u32,
+}
+
+impl<'a> OpenRouter<'a> {
+    pub const fn new(model: &'a str) -> Self {
+        Self {
+            model,
+            max_tokens: 1024,
+        }
+    }
+}
+
+impl LlmProvider for OpenRouter<'_> {
+    fn host(&self) -> &str {
+        "openrouter.ai"
+    }
+
+    fn path(&self) -> &str {
+        "/api/v1/chat/completions"
+    }
+
+    fn build_body<const N: usize>(&self, prompt: &str, out: &mut String<N>) -> Result<(), ()> {
+        out.clear();
+        out.push_str("{\"model\":\"").map_err(|_| ())?;
+        out.push_str(self.model).map_err(|_| ())?;
+        write!(
+            out,
+            "\",\"max_tokens\":{},\"stream\":true,\"messages\":[{{\"role\":\"user\",\"content\":\"",
+            self.max_tokens
+        )
+        .map_err(|_| ())?;
+        json::escape_into(prompt, out)?;
+        out.push_str("\"}]}").map_err(|_| ())?;
+        Ok(())
+    }
+
+    fn extract_delta(&self, data_json: &str, out: &mut String<256>) -> bool {
+        json::extract_openai_delta(data_json, out)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -99,5 +145,29 @@ mod tests {
         let c = Claude::new("claude-opus-4-8");
         assert_eq!(c.host(), "api.anthropic.com");
         assert_eq!(c.path(), "/v1/messages");
+    }
+
+    #[test]
+    fn builds_valid_openrouter_body() {
+        let r = OpenRouter::new("deepseek/deepseek-chat");
+        let mut body: String<512> = String::new();
+        r.build_body("hi", &mut body).unwrap();
+        assert_eq!(
+            body.as_str(),
+            r#"{"model":"deepseek/deepseek-chat","max_tokens":1024,"stream":true,"messages":[{"role":"user","content":"hi"}]}"#
+        );
+        assert_eq!(r.host(), "openrouter.ai");
+        assert_eq!(r.path(), "/api/v1/chat/completions");
+    }
+
+    #[test]
+    fn openrouter_extracts_delta() {
+        let r = OpenRouter::new("deepseek/deepseek-chat");
+        let mut out: String<256> = String::new();
+        assert!(r.extract_delta(
+            r#"{"choices":[{"delta":{"content":"yo"}}]}"#,
+            &mut out
+        ));
+        assert_eq!(out.as_str(), "yo");
     }
 }

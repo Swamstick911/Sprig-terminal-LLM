@@ -166,6 +166,27 @@ pub fn extract_text_delta<const N: usize>(json: &str, out: &mut String<N>) -> bo
     decode_string_body(body, out)
 }
 
+/// Extract `choices[0].delta.content` from an OpenAI / OpenRouter streaming
+/// chunk. Returns `true` and fills `out` when the chunk carries text content;
+/// `false` for role-only / `content: null` / finish chunks.
+pub fn extract_openai_delta<const N: usize>(json: &str, out: &mut String<N>) -> bool {
+    let after = match json.find("\"delta\"") {
+        Some(i) => &json[i..],
+        None => return false,
+    };
+    let key = match after.find("\"content\"") {
+        Some(i) => &after[i + "\"content\"".len()..],
+        None => return false,
+    };
+    // Skip the `:` and whitespace; content must be a string (not `null`).
+    let rest = key.trim_start_matches([':', ' ', '\t']);
+    if !rest.starts_with('"') {
+        return false; // e.g. "content":null
+    }
+    out.clear();
+    decode_string_body(&rest[1..], out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -224,6 +245,27 @@ mod tests {
         let data = r#"{"delta":{"type":"input_json_delta","partial_json":"{\"a\":1}"}}"#;
         let mut out: String<256> = String::new();
         assert!(!extract_text_delta(data, &mut out));
+    }
+
+    #[test]
+    fn extracts_openai_delta_content() {
+        let data = r#"{"choices":[{"index":0,"delta":{"role":"assistant","content":"Hello"},"finish_reason":null}]}"#;
+        let mut out: String<256> = String::new();
+        assert!(extract_openai_delta(data, &mut out));
+        assert_eq!(out.as_str(), "Hello");
+    }
+
+    #[test]
+    fn openai_null_content_and_finish_yield_nothing() {
+        let mut out: String<256> = String::new();
+        assert!(!extract_openai_delta(
+            r#"{"choices":[{"delta":{"role":"assistant","content":null}}]}"#,
+            &mut out
+        ));
+        assert!(!extract_openai_delta(
+            r#"{"choices":[{"delta":{},"finish_reason":"stop"}]}"#,
+            &mut out
+        ));
     }
 
     #[test]

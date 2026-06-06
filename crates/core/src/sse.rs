@@ -50,6 +50,29 @@ pub fn process_line(line: &str, delta: &mut String<256>) -> SseOut {
     }
 }
 
+/// Classify one OpenAI / OpenRouter SSE line. On [`SseOut::Delta`], `delta`
+/// holds the new `choices[0].delta.content` text. The stream ends with the
+/// literal `data: [DONE]` line.
+pub fn process_openai_line(line: &str, delta: &mut String<256>) -> SseOut {
+    let line = line.trim_end_matches('\r');
+    let rest = match line.strip_prefix("data:") {
+        Some(r) => r.trim_start(),
+        None => return SseOut::None,
+    };
+    if rest == "[DONE]" {
+        return SseOut::Stop;
+    }
+    // Top-level `"error":` only — never matches the word "error" inside content,
+    // whose quotes are escaped.
+    if rest.contains("\"error\":") {
+        return SseOut::Error;
+    }
+    if json::extract_openai_delta(rest, delta) {
+        return SseOut::Delta;
+    }
+    SseOut::None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -93,6 +116,29 @@ mod tests {
         let line = "data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"ok\"}}\r";
         assert_eq!(process_line(line, &mut d), SseOut::Delta);
         assert_eq!(d.as_str(), "ok");
+    }
+
+    #[test]
+    fn openai_delta_done_and_error() {
+        let mut d: String<256> = String::new();
+        assert_eq!(
+            process_openai_line(r#"data: {"choices":[{"delta":{"content":"Hi"}}]}"#, &mut d),
+            SseOut::Delta
+        );
+        assert_eq!(d.as_str(), "Hi");
+        assert_eq!(process_openai_line("data: [DONE]", &mut d), SseOut::Stop);
+        assert_eq!(
+            process_openai_line(r#"data: {"error":{"message":"bad"}}"#, &mut d),
+            SseOut::Error
+        );
+    }
+
+    #[test]
+    fn openai_content_saying_error_is_a_delta_not_an_error() {
+        let mut d: String<256> = String::new();
+        let line = r#"data: {"choices":[{"delta":{"content":"an error occurred"}}]}"#;
+        assert_eq!(process_openai_line(line, &mut d), SseOut::Delta);
+        assert_eq!(d.as_str(), "an error occurred");
     }
 
     #[test]

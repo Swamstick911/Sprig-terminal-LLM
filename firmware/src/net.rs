@@ -48,8 +48,8 @@ use reqwless::headers::ContentType;
 use reqwless::request::{Method, RequestBuilder};
 use static_cell::StaticCell;
 
-use sprig_llm_core::provider::{Claude, LlmProvider};
-use sprig_llm_core::sse::{process_line, SseOut};
+use sprig_llm_core::provider::{LlmProvider, OpenRouter};
+use sprig_llm_core::sse::{process_openai_line, SseOut};
 
 use crate::config;
 
@@ -227,11 +227,11 @@ impl Net {
     where
         F: FnMut(&str),
     {
-        let claude = Claude::new(config::MODEL);
+        let provider = OpenRouter::new(config::MODEL);
 
         // --- Build the JSON body via the core crate (escaping + "stream":true). ---
         let mut body: String<BODY_CAP> = String::new();
-        claude
+        provider
             .build_body(prompt, &mut body)
             .map_err(|_| NetError::BodyTooLarge)?;
 
@@ -254,16 +254,16 @@ impl Net {
         // Full URL = scheme://host/path. host()/path() come from the provider.
         let mut url: String<96> = String::new();
         url.push_str("https://").map_err(|_| NetError::Transport)?;
-        url.push_str(claude.host()).map_err(|_| NetError::Transport)?;
-        url.push_str(claude.path()).map_err(|_| NetError::Transport)?;
+        url.push_str(provider.host()).map_err(|_| NetError::Transport)?;
+        url.push_str(provider.path()).map_err(|_| NetError::Transport)?;
 
         let mut http_buf = [0u8; HTTP_BUF];
 
-        // Required Anthropic headers (content-type set via .content_type()).
-        let headers = [
-            ("x-api-key", config::ANTHROPIC_API_KEY),
-            ("anthropic-version", Claude::ANTHROPIC_VERSION),
-        ];
+        // OpenRouter uses bearer auth (content-type set via .content_type()).
+        let mut auth: String<128> = String::new();
+        auth.push_str("Bearer ").map_err(|_| NetError::Transport)?;
+        auth.push_str(config::API_KEY).map_err(|_| NetError::Transport)?;
+        let headers = [("Authorization", auth.as_str())];
 
         let mut req = client
             .request(Method::POST, &url)
@@ -306,7 +306,7 @@ impl Net {
                 if b == b'\n' {
                     if !skipping {
                         if let Ok(text) = core::str::from_utf8(&line) {
-                            match process_line(text, &mut delta) {
+                            match process_openai_line(text, &mut delta) {
                                 SseOut::Delta => on_delta(&delta),
                                 SseOut::Stop => return Ok(()),
                                 SseOut::Error => return Err(NetError::StreamError),
@@ -328,7 +328,7 @@ impl Net {
         // Process any trailing partial line (no final newline).
         if !skipping && !line.is_empty() {
             if let Ok(text) = core::str::from_utf8(&line) {
-                match process_line(text, &mut delta) {
+                match process_openai_line(text, &mut delta) {
                     SseOut::Delta => on_delta(&delta),
                     SseOut::Error => return Err(NetError::StreamError),
                     _ => {}
