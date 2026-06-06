@@ -159,6 +159,8 @@ async fn main(spawner: Spawner) {
 
     // --- Main loop: scan → feed core → redraw on change. ---
     let tick = Duration::from_millis(input::TICK_MS);
+    // True while a full-screen LLM response is shown; the next key dismisses it.
+    let mut showing_response = false;
     loop {
         // Collect this tick's events first (the closure can't borrow `kb` while
         // `buttons` is borrowed), then process them.
@@ -167,6 +169,17 @@ async fn main(spawner: Spawner) {
         buttons.poll(|ev| {
             let _ = events.push(ev);
         });
+
+        // A response view stays on screen until any key is pressed; that key just
+        // returns to the keyboard (it is consumed, not typed).
+        if showing_response {
+            if !events.is_empty() {
+                showing_response = false;
+                let _ = Ui::render(&mut lcd, &kb, &status);
+            }
+            Timer::after(tick).await;
+            continue;
+        }
 
         let mut dirty = false;
         for ev in events {
@@ -184,7 +197,7 @@ async fn main(spawner: Spawner) {
                     let mut prompt: HString<PROMPT_CAP> = HString::new();
                     let _ = prompt.push_str(kb.text());
                     stream_to_screen(&mut lcd, &mut net, &prompt).await;
-                    dirty = true; // repaint keyboard on return
+                    showing_response = true; // keep the reply up until a key press
                 }
                 Outcome::Expand => {
                     info!("Expand requested; draft len={}", kb.text().len());
@@ -198,7 +211,7 @@ async fn main(spawner: Spawner) {
                     let _ = prompt.push_str(EXPAND_PREFIX);
                     let _ = prompt.push_str(kb.text());
                     stream_to_screen(&mut lcd, &mut net, &prompt).await;
-                    dirty = true;
+                    showing_response = true;
                 }
             }
         }
