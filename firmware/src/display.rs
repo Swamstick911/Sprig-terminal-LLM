@@ -219,15 +219,16 @@ impl Ui {
         D: DrawTarget<Color = Rgb565>,
     {
         // Line 1: predictions, each tagged with its right-pad accept button.
-        // Suggestions for the current word (informational in compose: the
-        // right pad selects groups here, so we don't tag them with accept keys).
-        let cands = kb.candidates();
-        if cands.is_empty() {
-            Self::text(target, "type for suggestions", 2, GUIDE_TOP, DIM)?;
-        } else {
-            let colw = WIDTH as i32 / 4;
-            for (i, c) in cands.iter().enumerate().take(4) {
-                Self::text(target, c.as_str(), i as i32 * colw + 1, GUIDE_TOP, FG)?;
+        // One clear, fully-readable suggestion: pressing space (L) completes the
+        // current word to it. Showing a single word avoids the old overlap.
+        match kb.space_completion() {
+            Some(word) => {
+                let mut s: String<30> = String::new();
+                let _ = write!(s, "L> {}", word);
+                Self::text(target, &s, 2, GUIDE_TOP, ACCENT)?;
+            }
+            None => {
+                Self::text(target, "L = space", 2, GUIDE_TOP, DIM)?;
             }
         }
 

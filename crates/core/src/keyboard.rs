@@ -16,7 +16,7 @@
 
 use crate::button::{Button, KeyEvent};
 use crate::layout;
-use crate::predict::{Candidates, Predictor};
+use crate::predict::{Candidate, Candidates, Predictor};
 use heapless::String;
 
 /// Maximum draft length (bytes).
@@ -51,6 +51,8 @@ pub struct Keyboard {
     /// One-shot capitalization for the next typed letter.
     caps: bool,
     cands: Candidates,
+    /// Word that space will complete the current (incomplete) word to, if any.
+    space_accept: Option<Candidate>,
 }
 
 impl Default for Keyboard {
@@ -67,6 +69,7 @@ impl Keyboard {
             action_armed: false,
             caps: false,
             cands: Candidates::new(),
+            space_accept: None,
         }
     }
 
@@ -101,6 +104,12 @@ impl Keyboard {
         }
     }
 
+    /// The word that pressing space (`L`) will complete the current word to, if
+    /// any. `None` means space inserts a literal space. The renderer shows this.
+    pub fn space_completion(&self) -> Option<&str> {
+        self.space_accept.as_deref()
+    }
+
     /// Process one key event, returning what the app should do.
     pub fn process(&mut self, ev: KeyEvent, predictor: &dyn Predictor) -> Outcome {
         if self.action_armed {
@@ -121,7 +130,13 @@ impl Keyboard {
         match self.state {
             State::Compose => {
                 if b == Button::L {
-                    self.push_char(' ');
+                    // Space completes an incomplete word to the top suggestion;
+                    // otherwise it inserts a literal space.
+                    if let Some(word) = self.space_accept.clone() {
+                        self.accept_word(word.as_str());
+                    } else {
+                        self.push_char(' ');
+                    }
                     self.repredict(predictor);
                     return Outcome::Redraw;
                 }
@@ -218,7 +233,17 @@ impl Keyboard {
         let start = self.prefix_start();
         let mut tmp = Candidates::new();
         predictor.predict(&self.buf[start..], &mut tmp);
+        // Space completes the current word only if it isn't already a word.
+        let complete = {
+            let partial = &self.buf[start..];
+            if !partial.is_empty() && !predictor.is_word(partial) {
+                tmp.first().cloned()
+            } else {
+                None
+            }
+        };
         self.cands = tmp;
+        self.space_accept = complete;
     }
 
     /// Replace the current partial word with `word` and a trailing space.
@@ -331,8 +356,9 @@ mod tests {
 
     #[test]
     fn accepting_a_word_that_would_overflow_leaves_draft_intact() {
-        // A 20-char candidate that won't fit once the draft is nearly full.
-        let p = StaticPredictor::new(&["aardvarkaardvarkaard"]);
+        // "a" is a word (so space stays literal while filling); the 20-char
+        // candidate is what won't fit once the draft is nearly full.
+        let p = StaticPredictor::new(&["a", "aardvarkaardvarkaard"]);
         let mut k = Keyboard::new();
         // Fill the draft with "a " pairs up to 248 bytes.
         for _ in 0..124 {
@@ -349,6 +375,35 @@ mod tests {
         tap(&mut k, S, &p);
         tap(&mut k, I, &p); // accept candidate 0 → must no-op, not corrupt
         assert_eq!(k.text(), before.as_str());
+    }
+
+    #[test]
+    fn space_completes_an_incomplete_word() {
+        let p = StaticPredictor::new(&["apple", "apply", "i"]);
+        let mut k = Keyboard::new();
+        tap(&mut k, W, &p);
+        tap(&mut k, W, &p); // 'a'  (abcd[0])
+        tap(&mut k, D, &p);
+        tap(&mut k, D, &p); // 'p'  (mnop[3])
+        tap(&mut k, D, &p);
+        tap(&mut k, D, &p); // 'p'
+        tap(&mut k, S, &p);
+        tap(&mut k, D, &p); // 'l'  (ijkl[3])
+        assert_eq!(k.text(), "appl");
+        assert_eq!(k.space_completion(), Some("apple"));
+        tap(&mut k, L, &p); // space → complete
+        assert_eq!(k.text(), "apple ");
+    }
+
+    #[test]
+    fn space_stays_literal_after_a_complete_word() {
+        let p = StaticPredictor::new(&["i", "is", "in"]);
+        let mut k = Keyboard::new();
+        tap(&mut k, S, &p);
+        tap(&mut k, W, &p); // 'i'  (ijkl[0])
+        assert_eq!(k.space_completion(), None); // "i" is already a word
+        tap(&mut k, L, &p); // literal space, no autocorrect to "is"
+        assert_eq!(k.text(), "i ");
     }
 
     #[test]

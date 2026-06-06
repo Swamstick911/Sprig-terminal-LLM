@@ -16,6 +16,10 @@ pub type Candidates = Vec<Candidate, 4>;
 pub trait Predictor {
     /// Fill `out` (cleared first) with up to four candidates for `prefix`.
     fn predict(&self, prefix: &str, out: &mut Candidates);
+
+    /// Whether `w` is itself a complete word in the model. The keyboard uses
+    /// this to decide whether space should complete the word or stay literal.
+    fn is_word(&self, w: &str) -> bool;
 }
 
 /// Prefix-match predictor backed by a static word list. Used in tests and as a
@@ -48,6 +52,10 @@ impl Predictor for StaticPredictor<'_> {
             }
         }
     }
+
+    fn is_word(&self, w: &str) -> bool {
+        self.words.iter().any(|&x| x == w)
+    }
 }
 
 #[cfg(test)]
@@ -78,5 +86,13 @@ mod tests {
         let mut out = Candidates::new();
         p.predict("hi", &mut out);
         assert!(out.is_empty());
+    }
+
+    #[test]
+    fn is_word_checks_membership() {
+        let p = StaticPredictor::new(&["hi", "hello"]);
+        assert!(p.is_word("hi"));
+        assert!(!p.is_word("he"));
+        assert!(!p.is_word("hello!"));
     }
 }
