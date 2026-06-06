@@ -115,9 +115,16 @@ impl Ui {
         };
         Self::text(target, label, 2, STATUS_TOP + 2, color)?;
 
+        // Right side: CAPS flag + a live suggestion count (also a handy
+        // indicator that prediction is firing).
+        let mut right: String<12> = String::new();
         if kb.caps() {
-            Self::text(target, "CAPS", WIDTH as i32 - 4 * 6 - 2, STATUS_TOP + 2, WARN)?;
+            let _ = right.push_str("CAPS ");
         }
+        let _ = write!(right, "s{}", kb.candidates().len());
+        let w = right.len() as i32 * 6;
+        Self::text(target, &right, WIDTH as i32 - w - 2, STATUS_TOP + 2, DIM)?;
+
         Self::hline(target, DRAFT_TOP - 1, DIM)?;
         Ok(())
     }
@@ -155,7 +162,32 @@ impl Ui {
             col += 1;
         }
 
-        if y <= GUIDE_TOP - LINE_H {
+        // Inline "ghost" completion (iOS QuickType / fish-shell style): the
+        // not-yet-typed tail of the top suggestion, dimmed, right at the cursor.
+        // Pressing space (L) accepts it.
+        if let Some(suffix) = kb.completion_suffix() {
+            let ghost = MonoTextStyle::new(&FONT_6X10, DIM);
+            // A thin caret marks the boundary between typed text and the ghost.
+            Rectangle::new(Point::new(x, y), Size::new(1, 9))
+                .into_styled(PrimitiveStyle::with_fill(ACCENT))
+                .draw(target)?;
+            for ch in suffix.chars() {
+                if col >= COLS {
+                    x = 2;
+                    y += LINE_H;
+                    col = 0;
+                }
+                if y > GUIDE_TOP - LINE_H {
+                    break;
+                }
+                buf.clear();
+                let _ = buf.push(ch);
+                Text::with_baseline(&buf, Point::new(x, y), ghost, Baseline::Top).draw(target)?;
+                x += 6;
+                col += 1;
+            }
+        } else if y <= GUIDE_TOP - LINE_H {
+            // No completion: a solid block cursor.
             Rectangle::new(Point::new(x, y), Size::new(6, 9))
                 .into_styled(PrimitiveStyle::with_fill(ACCENT))
                 .draw(target)?;
@@ -221,15 +253,17 @@ impl Ui {
         // Line 1: predictions, each tagged with its right-pad accept button.
         // One clear, fully-readable suggestion: pressing space (L) completes the
         // current word to it. Showing a single word avoids the old overlap.
-        match kb.space_completion() {
-            Some(word) => {
-                let mut s: String<30> = String::new();
-                let _ = write!(s, "L> {}", word);
-                Self::text(target, &s, 2, GUIDE_TOP, ACCENT)?;
-            }
-            None => {
-                Self::text(target, "L = space", 2, GUIDE_TOP, DIM)?;
-            }
+        // The completion itself shows inline (ghost text) in the draft above;
+        // here we just hint the accept key, or surface the top candidate so the
+        // user always sees that prediction is working.
+        if kb.completion_suffix().is_some() {
+            Self::text(target, "space = accept word", 2, GUIDE_TOP, ACCENT)?;
+        } else if let Some(top) = kb.candidates().first() {
+            let mut s: String<30> = String::new();
+            let _ = write!(s, "~ {}", top.as_str());
+            Self::text(target, &s, 2, GUIDE_TOP, DIM)?;
+        } else {
+            Self::text(target, "L = space", 2, GUIDE_TOP, DIM)?;
         }
 
         // Lines 2-3: the group → button map (which button holds which letters).

@@ -110,6 +110,15 @@ impl Keyboard {
         self.space_accept.as_deref()
     }
 
+    /// The not-yet-typed tail of the space completion, for inline "ghost" text.
+    /// e.g. typed "appl" with completion "apple" → `Some("e")`. `None` when no
+    /// completion applies.
+    pub fn completion_suffix(&self) -> Option<&str> {
+        let word = self.space_accept.as_deref()?;
+        let start = self.prefix_start();
+        word.strip_prefix(&self.buf[start..])
+    }
+
     /// Process one key event, returning what the app should do.
     pub fn process(&mut self, ev: KeyEvent, predictor: &dyn Predictor) -> Outcome {
         if self.action_armed {
@@ -393,6 +402,17 @@ mod tests {
         assert_eq!(k.space_completion(), Some("apple"));
         tap(&mut k, L, &p); // space → complete
         assert_eq!(k.text(), "apple ");
+    }
+
+    #[test]
+    fn completion_suffix_is_the_untyped_tail() {
+        let p = StaticPredictor::new(&["apple"]);
+        let mut k = Keyboard::new();
+        tap(&mut k, W, &p);
+        tap(&mut k, W, &p); // 'a'
+        tap(&mut k, D, &p);
+        tap(&mut k, D, &p); // 'p'  → "ap"
+        assert_eq!(k.completion_suffix(), Some("ple"));
     }
 
     #[test]
