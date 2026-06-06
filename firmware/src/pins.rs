@@ -71,6 +71,46 @@ pub mod buttons {
     pub const L: u8 = 15;
 }
 
+/// Audio (MAX98357A I2S class-D amplifier + speaker) pin assignments.
+///
+/// Source: the official Sprig firmware build config selects the Pico-SDK
+/// `pico_audio_i2s` driver with these compile definitions in
+/// `firmware/spade/src/rpi/CMakeLists.txt`:
+///
+/// ```text
+///   PICO_AUDIO_I2S_DATA_PIN=9
+///   PICO_AUDIO_I2S_CLOCK_PIN_BASE=10
+///   PICO_AUDIO_I2S_MONO_INPUT=1
+/// ```
+///
+/// <https://github.com/hackclub/sprig/blob/main/firmware/spade/src/rpi/CMakeLists.txt>
+///
+/// In the Pico-SDK `pico_audio_i2s` convention, `CLOCK_PIN_BASE` is BCLK and
+/// `CLOCK_PIN_BASE + 1` is LRCLK (word-select) — the two must be consecutive
+/// GPIOs because the PIO clocks them out on adjacent side-set pins. So:
+///
+///   - DIN  (serial data)  = GPIO 9   (`DATA_PIN`)
+///   - BCLK (bit clock)    = GPIO 10  (`CLOCK_PIN_BASE`)
+///   - LRCLK (word select) = GPIO 11  (`CLOCK_PIN_BASE + 1`)
+///
+/// Confidence:
+///   - DATA=9, BCLK=10: HIGH (verbatim compile definitions from the Sprig
+///     `rpi/CMakeLists.txt`).
+///   - LRCLK=11: HIGH (it is `CLOCK_PIN_BASE + 1` by the fixed `pico_audio_i2s`
+///     pin convention; the SDK driver derives word-select this way and the
+///     hardware is wired to match).
+///
+/// The MAX98357A's `SD` (shutdown / gain-select) pin is left to the board's
+/// default (amp enabled) and is not driven by firmware on the Sprig.
+pub mod audio {
+    /// I2S serial data (DIN on the MAX98357A). Sprig: `PICO_AUDIO_I2S_DATA_PIN=9`.
+    pub const DIN: u8 = 9;
+    /// I2S bit clock (BCLK). Sprig: `PICO_AUDIO_I2S_CLOCK_PIN_BASE=10`.
+    pub const BCLK: u8 = 10;
+    /// I2S word select / left-right clock (LRCLK). `CLOCK_PIN_BASE + 1 = 11`.
+    pub const LRCLK: u8 = 11;
+}
+
 /// On-board status LEDs (not used in Milestone 1, kept for reference).
 pub mod led {
     /// Left LED. HAL: `pin_num_led_l() == 28`.

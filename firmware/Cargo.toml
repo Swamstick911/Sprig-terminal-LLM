@@ -103,6 +103,18 @@ embedded-hal-bus = "0.2"
 # device). Used here for the per-tick event buffer.
 heapless = "0.8"
 
+# --- Audio: PIO-driven I2S TX to the MAX98357A (see src/audio.rs). ---
+# The RP2040 has no hardware I2S, so the audio module clocks BCLK/LRCLK/DATA out
+# of PIO1 via a small assembly program. `pio` (the RP2040 PIO support crate) and
+# `pio-proc` (its `pio_asm!` compile-time assembler macro) are the exact versions
+# embassy-rp 0.2.0 itself depends on (`pio ^0.2.1`, `pio-proc ^0.2`), so they are
+# guaranteed type-compatible with `embassy_rp::pio` (same `pio::Program<32>`).
+pio = "0.2.1"
+pio-proc = "0.2"
+# Fixed-point Q-format used by embassy-rp's PIO clock divider (`FixedU32<U8>`).
+# Pinned to the same `fixed ^1.23` embassy-rp 0.2.0 uses.
+fixed = "1"
+
 # The Cortex-M0+ (thumbv6m) has no native atomic compare-exchange. embedded-hal-
 # bus pulls `portable-atomic`, which needs a CAS strategy: route it through
 # `critical-section` (embassy-rp provides the impl via `critical-section-impl`).
