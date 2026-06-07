@@ -37,11 +37,11 @@ embassy-executor = { version = "0.6", features = [
     "arch-cortex-m",
     "executor-thread",
     "integrated-timers",
-    # The main task's future holds the streaming-HTTPS locals (8 KiB TLS rx +
-    # 8 KiB TLS tx + a 4 KiB HTTP buffer + smaller bufs), so the task arena must
-    # comfortably exceed ~24 KiB. 64 KiB leaves headroom for the cyw43/net tasks
-    # too (264 KiB SRAM total). Tune down with on-device measurement.
-    "task-arena-size-65536",
+    # The main task's future holds the streaming-HTTPS locals (TLS rx/tx + HTTP
+    # buffer + the 4 KiB request body), and we also spawn the cyw43, net, and USB
+    # device tasks. 128 KiB gives all of them comfortable headroom (264 KiB SRAM
+    # total). Tune down with on-device measurement.
+    "task-arena-size-131072",
 ] }
 # embassy-rp 0.2 is RP2040-only (no `rp2040` chip-select feature; that arrived
 # with RP2350 support in 0.3+). `boot2-w25q080` selects the second-stage
@@ -86,6 +86,21 @@ reqwless = { version = "0.12.1", default-features = false, features = [
 ] }
 embedded-io-async = "0.6"
 embedded-nal-async = "0.7"
+
+# --- USB HID keyboard (src/usb.rs): "type" replies into a connected PC. ---
+# embassy-usb 0.3.0 is the release that pins to embassy-usb-driver ^0.1 (the
+# 0.1.1 re-exported by embassy-rp 0.2.0's `embassy_rp::usb` driver), embassy-sync
+# ^0.6, embassy-futures ^0.1 and heapless ^0.8 — i.e. exactly this snapshot
+# (verified via crates.io dependency metadata). The `usbd-hid` feature enables
+# `HidWriter::write_serialize`, which serialises a `usbd_hid` report type.
+embassy-usb = { version = "0.3.0", default-features = false, features = [
+    "defmt",
+    "usbd-hid",
+] }
+# `KeyboardReport` + its `SerializedDescriptor`/`AsInputReport` impls. embassy-usb
+# 0.3.0 depends on `usbd-hid ^0.8.1`, so pinning "0.8" unifies to one crate copy
+# and the report type implements the trait `write_serialize` expects.
+usbd-hid = "0.8"
 
 # Hardware RNG for the TLS seed (RP2040 ring-oscillator TRNG via embassy-rp).
 rand_core = "0.6"

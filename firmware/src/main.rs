@@ -25,6 +25,8 @@ mod display;
 mod input;
 mod net;
 mod pins;
+#[allow(dead_code)] // public API used once the "type to PC" trigger is wired in
+mod usb;
 
 use defmt::info;
 use embassy_executor::Spawner;
@@ -263,6 +265,10 @@ async fn main(spawner: Spawner) {
         p.DMA_CH1,
     );
 
+    // --- USB HID keyboard on the native USB: lets the device type a reply into
+    // a connected PC. WiFi uses the separate CYW43 radio, so the two coexist. ---
+    let mut usb_kb = usb::init(spawner, p.USB);
+
     // --- Core keyboard + predictor. ---
     let predictor = StaticPredictor::new(dict_data::WORDS);
     let mut kb = Keyboard::new();
@@ -298,6 +304,7 @@ async fn main(spawner: Spawner) {
                 let max_scroll = total.saturating_sub(visible);
                 let mut dismiss = false;
                 let mut moved = false;
+                let mut type_pc = false;
                 for ev in &events {
                     if let KeyEvent::Tap(b) = ev {
                         match b {
@@ -313,6 +320,8 @@ async fn main(spawner: Spawner) {
                                     moved = true;
                                 }
                             }
+                            // D types the reply into the connected PC over USB.
+                            Button::D => type_pc = true,
                             // Any other key dismisses back to the keyboard.
                             _ => dismiss = true,
                         }
@@ -322,10 +331,14 @@ async fn main(spawner: Spawner) {
                     mode = Mode::Composing;
                     let _ = Ui::render(&mut lcd, &kb, &status);
                 } else {
-                    if moved {
+                    if type_pc {
+                        let _ = Ui::response_scrolled(&mut lcd, "Typing to PC...", &last_reply, scroll);
+                        usb_kb.type_text(&last_reply).await;
+                    }
+                    if moved || type_pc {
                         let _ = Ui::response_scrolled(
                             &mut lcd,
-                            "W/I up  S/K down  L=back",
+                            "scroll  D=type  L=back",
                             &last_reply,
                             scroll,
                         );
@@ -601,7 +614,7 @@ where
 
     match result {
         Ok(()) => {
-            let _ = Ui::response(lcd, "Done: W/I S/K scroll", &acc);
+            let _ = Ui::response(lcd, "Done  D=type  L=back", &acc);
             Ok(acc)
         }
         Err(e) => {
