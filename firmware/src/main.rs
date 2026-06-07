@@ -25,6 +25,7 @@ mod display;
 mod input;
 mod net;
 mod pins;
+mod storage;
 #[allow(dead_code)] // public API used once the "type to PC" trigger is wired in
 mod usb;
 
@@ -274,9 +275,34 @@ async fn main(spawner: Spawner) {
     let mut kb = Keyboard::new();
     let mut status: display::Status = display::Status::new();
 
+    // --- Persistent storage (top flash sector). Blocking-mode driver, no DMA
+    // needed; reads are plain XIP, erase/write run from RAM in a critical
+    // section (see storage.rs). `p.FLASH` is otherwise unused. ---
+    let mut flash = storage::Flash::new_blocking(p.FLASH);
+
     // --- App state: settings + bounded conversation history + UI mode. ---
     let mut settings = Settings::new();
     let mut history: HVec<Turn, MAX_TURNS> = HVec::new();
+
+    // Restore saved settings + conversation, if any. Indices are clamped to the
+    // current option arrays so an old/oversized index can never panic.
+    if let Some(saved) = storage::load(&mut flash) {
+        if (saved.model as usize) < MODELS.len() {
+            settings.model = saved.model as usize;
+        }
+        if (saved.persona as usize) < PERSONAS.len() {
+            settings.persona = saved.persona as usize;
+        }
+        if (saved.max_tokens as usize) < MAX_TOKENS.len() {
+            settings.max_tokens = saved.max_tokens as usize;
+        }
+        for (role_u8, text) in saved.turns {
+            // `push_turn` truncates to TURN_CAP and drops oldest when full.
+            push_turn(&mut history, storage::role_from_u8(role_u8), &text);
+        }
+        info!("storage: restored {} turn(s)", history.len());
+    }
+
     let mut mode = Mode::Composing;
     // Holds the most recent finished reply, for scrolling in ShowingResponse.
     let mut last_reply: HString<RESPONSE_CAP> = HString::new();
@@ -354,6 +380,9 @@ async fn main(spawner: Spawner) {
             Mode::Settings => {
                 let mut redraw = false;
                 let mut exit = false;
+                // Set when a persisted value (a setting index, or history via
+                // New conversation) changed, so we flush to flash after the loop.
+                let mut save_now = false;
                 for ev in &events {
                     if let KeyEvent::Tap(b) = ev {
                         match b {
@@ -372,17 +401,21 @@ async fn main(spawner: Spawner) {
                                     ROW_MODEL => {
                                         settings.model =
                                             (settings.model + 1) % MODELS.len();
+                                        save_now = true;
                                     }
                                     ROW_PERSONA => {
                                         settings.persona =
                                             (settings.persona + 1) % PERSONAS.len();
+                                        save_now = true;
                                     }
                                     ROW_TOKENS => {
                                         settings.max_tokens =
                                             (settings.max_tokens + 1) % MAX_TOKENS.len();
+                                        save_now = true;
                                     }
                                     ROW_NEWCONV => {
                                         history.clear();
+                                        save_now = true;
                                         let _ = audio.play_click().await;
                                     }
                                     ROW_BACK => exit = true,
@@ -399,6 +432,12 @@ async fn main(spawner: Spawner) {
                             _ => {}
                         }
                     }
+                }
+                // Persist the changed setting / cleared history. The menu is a
+                // quiescent point (no network request in flight), so the brief
+                // flash write is safe here.
+                if save_now {
+                    persist(&mut flash, &settings, &history);
                 }
                 if exit {
                     mode = Mode::Composing;
@@ -445,6 +484,9 @@ async fn main(spawner: Spawner) {
                                     // Clear the draft so the next turn starts fresh
                                     // (otherwise the old prompt lingers and re-sends).
                                     kb.set_text("");
+                                    // Turn fully complete and the network is idle
+                                    // — a safe point to persist the conversation.
+                                    persist(&mut flash, &settings, &history);
                                 }
                                 Err(_) => {
                                     // Failed: drop the user turn so the chat isn't
@@ -519,6 +561,25 @@ where
     }
     let _ = items.push("Back");
     let _ = Ui::menu(lcd, "Settings (A/L/D=use/change)", &items, settings.cursor);
+}
+
+/// Snapshot the current settings + history into flash. Call ONLY at quiescent
+/// points (no network request in flight): after a settings change and after a
+/// turn fully completes. Errors are logged and swallowed inside `storage::save`.
+fn persist(flash: &mut storage::Flash, settings: &Settings, history: &[Turn]) {
+    let mut turns: HVec<(u8, HString<TURN_CAP>), MAX_TURNS> = HVec::new();
+    for (role, text) in history {
+        let mut s: HString<TURN_CAP> = HString::new();
+        let _ = s.push_str(text);
+        let _ = turns.push((storage::role_to_u8(*role), s));
+    }
+    let data = storage::Persisted {
+        model: settings.model as u8,
+        persona: settings.persona as u8,
+        max_tokens: settings.max_tokens as u8,
+        turns,
+    };
+    storage::save(flash, &data);
 }
 
 /// Push a turn into the bounded history, truncating its text to `TURN_CAP` bytes

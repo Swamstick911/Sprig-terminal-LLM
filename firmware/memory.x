@@ -9,9 +9,17 @@
  */
 MEMORY {
     /* boot2 occupies the first 0x100 bytes of flash; FLASH below starts after
-     * it so the vector table is correctly offset. */
+     * it so the vector table is correctly offset.
+     *
+     * The top 4 KiB (one erase sector) is carved off the END of flash and
+     * reserved for persistent storage (see src/storage.rs): the program can
+     * never link into it. Layout of the 2 MiB chip:
+     *   0x10000000 .. 0x10000100   boot2            (0x100)
+     *   0x10000100 .. 0x101FF000   program FLASH    (2048K - 0x100 - 0x1000)
+     *   0x101FF000 .. 0x10200000   storage sector   (0x1000)  <- STORAGE_OFFSET
+     */
     BOOT2 : ORIGIN = 0x10000000, LENGTH = 0x100
-    FLASH : ORIGIN = 0x10000100, LENGTH = 2048K - 0x100
+    FLASH : ORIGIN = 0x10000100, LENGTH = 2048K - 0x100 - 0x1000
 
     /* 264 KiB SRAM. The RP2040 splits this into striped banks (SRAM0..3) plus
      * two 4 KiB banks (SRAM4/5); for a single-core Embassy app a flat RAM
