@@ -123,12 +123,23 @@ impl Settings {
 
 /// The menu rows, in display order. `Back` returns to the keyboard; `NewConv`
 /// clears history.
-const MENU_ROWS: usize = 5;
+/// One-tap canned prompts: (menu label, text loaded into the draft to edit/send).
+const QUICK_PROMPTS: &[(&str, &str)] = &[
+    ("Summarize", "Summarize the following:\n"),
+    ("Explain (ELI5)", "Explain like I'm 5: "),
+    ("Translate -> EN", "Translate to English: "),
+    ("Proofread", "Proofread and correct: "),
+    ("Brainstorm", "Brainstorm ideas about: "),
+];
+
 const ROW_MODEL: usize = 0;
 const ROW_PERSONA: usize = 1;
 const ROW_TOKENS: usize = 2;
 const ROW_NEWCONV: usize = 3;
-const ROW_BACK: usize = 4;
+/// Quick-prompt rows occupy `[QUICK_BASE, QUICK_BASE + QUICK_PROMPTS.len())`.
+const QUICK_BASE: usize = 4;
+const ROW_BACK: usize = QUICK_BASE + QUICK_PROMPTS.len();
+const MENU_ROWS: usize = ROW_BACK + 1;
 
 /// Top-level UI mode.
 enum Mode {
@@ -362,6 +373,12 @@ async fn main(spawner: Spawner) {
                                         let _ = audio.play_click().await;
                                     }
                                     ROW_BACK => exit = true,
+                                    q if q >= QUICK_BASE && q < ROW_BACK => {
+                                        // Load the canned prompt into the draft and
+                                        // return to the keyboard to edit / send it.
+                                        kb.set_text(QUICK_PROMPTS[q - QUICK_BASE].1);
+                                        exit = true;
+                                    }
                                     _ => {}
                                 }
                                 redraw = true;
@@ -479,14 +496,16 @@ where
     let mut newconv_row: HString<32> = HString::new();
     let _ = write!(newconv_row, "New conversation ({})", history.len());
 
-    let items: [&str; MENU_ROWS] = [
-        model_row.as_str(),
-        persona_row.as_str(),
-        tokens_row.as_str(),
-        newconv_row.as_str(),
-        "Back",
-    ];
-    let _ = Ui::menu(lcd, "Settings (A/L/D=change)", &items, settings.cursor);
+    let mut items: HVec<&str, MENU_ROWS> = HVec::new();
+    let _ = items.push(model_row.as_str());
+    let _ = items.push(persona_row.as_str());
+    let _ = items.push(tokens_row.as_str());
+    let _ = items.push(newconv_row.as_str());
+    for (name, _) in QUICK_PROMPTS {
+        let _ = items.push(name);
+    }
+    let _ = items.push("Back");
+    let _ = Ui::menu(lcd, "Settings (A/L/D=use/change)", &items, settings.cursor);
 }
 
 /// Push a turn into the bounded history, truncating its text to `TURN_CAP` bytes
