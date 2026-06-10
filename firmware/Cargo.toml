@@ -1,11 +1,12 @@
-# Firmware for the Sprig Pocket LLM Terminal — Milestone 1.
+# Firmware for the Sprig Pocket LLM Terminal (RP2040 / Pico WH).
 #
-# This crate builds ONLY for the device target (thumbv6m-none-eabi / RP2040).
-# It is deliberately kept out of the workspace's default test build; see the
-# repo-root Cargo.toml note. To add it to the workspace, see firmware/README.md.
+# Builds only for the device target (thumbv6m-none-eabi). It is its own Cargo
+# workspace (the empty [workspace] table below) so the repo-root host build never
+# tries to compile this thumbv6m-only crate.
 #
-# Milestone 1: board bring-up, ST7735 LCD, 8-button input, twin-pad keyboard UI
-# rendered from `sprig-llm-core`. No WiFi/TLS yet (that is Milestone 2).
+# Features: ST7735 LCD, 8-button twin-pad keyboard + prediction, WiFi + TLS
+# streaming to an LLM (OpenRouter), multi-turn chat, settings menu, quick
+# prompts, AI game modes, audio, USB HID type-to-PC, and flash persistence.
 
 # This empty `[workspace]` table makes `firmware` its OWN workspace, so it can
 # be built standalone (`cargo build` from this dir) without being a member of

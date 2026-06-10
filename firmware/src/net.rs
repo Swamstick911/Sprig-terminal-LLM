@@ -1,4 +1,4 @@
-//! Milestone 2 networking: CYW43 WiFi bring-up + streaming HTTPS to Anthropic.
+//! Networking: CYW43 WiFi bring-up + streaming HTTPS to the LLM (OpenRouter).
 //!
 //! This module owns everything between the on-device keyboard and the LLM:
 //!
@@ -8,25 +8,25 @@
 //!      plus the WiFi `Control`). It spawns the two required background tasks
 //!      (`cyw43_runner_task`, `net_task`).
 //!
-//!   2. [`Net::send_prompt`] opens a TLS 1.3 connection to `api.anthropic.com`,
-//!      POSTs a streaming `/v1/messages` request whose body is built by the core
-//!      crate's [`Claude`] provider, and pumps the `text/event-stream` response
-//!      back one SSE line at a time. Every decoded text [`SseOut::Delta`] is
-//!      handed to the caller's callback so the UI can append it live. The full
-//!      response is NEVER buffered (264 KiB RAM budget).
+//!   2. [`Net::send_chat`] opens a TLS 1.3 connection to `openrouter.ai`, POSTs a
+//!      streaming `/api/v1/chat/completions` request whose body is built by the
+//!      core crate's `OpenRouter` provider, and pumps the `text/event-stream`
+//!      response back one SSE line at a time. Each decoded text delta is handed
+//!      to the caller's callback so the UI can append it live, and the final
+//!      token-usage count is returned. The full response is NEVER buffered
+//!      (264 KiB RAM budget).
 //!
 //! The core crate does all JSON building and SSE classification; this layer is
 //! purely the transport + glue.
 //!
-//! ## TLS posture (SECURITY TODO)
+//! ## TLS posture (SECURITY NOTE)
 //! reqwless 0.12's [`TlsVerify`] only offers `None` and `Psk` — there is no
 //! server-certificate / pinned-root-CA verification path in this version of the
 //! embedded-tls integration. We therefore connect with [`TlsVerify::None`]:
 //! the channel is encrypted (TLS 1.3) but the server identity is **not**
-//! authenticated, so a man-in-the-middle could impersonate api.anthropic.com.
-//! See the `// SECURITY TODO(M2)` at the `TlsConfig` construction site. To fix,
-//! either upgrade to a reqwless/embedded-tls release exposing a cert-verifier or
-//! pin the Anthropic root CA and verify it manually.
+//! authenticated, so a man-in-the-middle could impersonate `openrouter.ai`. Full
+//! verification needs a newer reqwless/embedded-tls (a stack-wide upgrade) — see
+//! the README's Limitations.
 
 use cyw43::{Control, NetDriver, PowerManagementMode, Runner as Cyw43Runner, State};
 use cyw43_pio::PioSpi;

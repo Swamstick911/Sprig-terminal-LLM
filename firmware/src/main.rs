@@ -1,18 +1,21 @@
-//! Sprig Pocket LLM Terminal — Milestone 1 firmware entry point.
+//! Sprig Pocket LLM Terminal — firmware entry point.
 //!
-//! Boots the RP2040, brings up the ST7735 LCD, configures the eight buttons,
-//! and runs the twin-pad keyboard from `sprig-llm-core`, redrawing the screen
-//! whenever the keyboard reports a visible change.
+//! Boots the RP2040, brings up the ST7735 LCD and the eight buttons, joins WiFi,
+//! and runs the twin-pad keyboard from `sprig-llm-core`. A composed prompt is
+//! streamed to an LLM over OpenRouter and the reply is rendered live. The device
+//! also does multi-turn chat, an on-device settings menu, quick prompts, AI game
+//! modes, response scrolling, a token-usage readout, audio feedback, USB
+//! "type-to-PC", and flash-persisted settings + conversation.
 //!
-//! Milestone 1 deliberately stops at on-device text composition: `Send` and
-//! `Expand` outcomes only flash a status banner. WiFi/TLS and the actual LLM
-//! request/stream land in Milestone 2.
-//!
-//! Architecture:
-//!   * [`input`]  — debounced GPIO scanning → `KeyEvent`s.
-//!   * [`display`] — ST7735 driver + four-zone embedded-graphics renderer.
-//!   * [`pins`]   — the verified Sprig pinout.
-//!   * core crate — the `Keyboard` state machine + `Predictor`.
+//! Modules:
+//!   * [`input`]   — debounced GPIO scanning → `KeyEvent`s.
+//!   * [`display`] — ST7735 driver + keyboard / response / menu renderer.
+//!   * [`net`]     — WiFi bring-up + streaming HTTPS to the LLM.
+//!   * [`audio`]   — PIO-I²S key click + reply chime.
+//!   * [`usb`]     — USB HID keyboard ("type the reply into a PC").
+//!   * [`storage`] — flash persistence of settings + conversation.
+//!   * [`pins`]    — the verified Sprig pinout.
+//!   * core crate  — the `Keyboard` state machine, `Predictor`, and provider/SSE.
 
 #![no_std]
 #![no_main]
