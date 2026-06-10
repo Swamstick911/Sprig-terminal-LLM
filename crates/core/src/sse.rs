@@ -73,6 +73,16 @@ pub fn process_openai_line(line: &str, delta: &mut String<256>) -> SseOut {
     SseOut::None
 }
 
+/// For an OpenAI / OpenRouter `data:` line, return `usage.total_tokens` if the
+/// chunk carries a usage object (only the final chunk does, and only when the
+/// request opted in via `stream_options.include_usage`). Returns `None` for
+/// `event:`/comment/blank lines and for ordinary delta chunks.
+pub fn usage_total(line: &str) -> Option<u32> {
+    let line = line.trim_end_matches('\r');
+    let rest = line.strip_prefix("data:")?.trim_start();
+    json::extract_total_tokens(rest)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -139,6 +149,18 @@ mod tests {
         let line = r#"data: {"choices":[{"delta":{"content":"an error occurred"}}]}"#;
         assert_eq!(process_openai_line(line, &mut d), SseOut::Delta);
         assert_eq!(d.as_str(), "an error occurred");
+    }
+
+    #[test]
+    fn usage_total_reads_final_chunk() {
+        let line = r#"data: {"choices":[],"usage":{"prompt_tokens":3,"completion_tokens":9,"total_tokens":12}}"#;
+        assert_eq!(usage_total(line), Some(12));
+        // Normal delta lines and non-data lines carry no usage.
+        assert_eq!(
+            usage_total(r#"data: {"choices":[{"delta":{"content":"hi"}}]}"#),
+            None
+        );
+        assert_eq!(usage_total("event: message"), None);
     }
 
     #[test]

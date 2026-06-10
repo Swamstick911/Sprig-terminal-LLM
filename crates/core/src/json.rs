@@ -187,6 +187,41 @@ pub fn extract_openai_delta<const N: usize>(json: &str, out: &mut String<N>) -> 
     decode_string_body(&rest[1..], out)
 }
 
+/// Extract `usage.total_tokens` from an OpenAI / OpenRouter chunk.
+///
+/// OpenRouter only emits a `"usage"` object (in the final chunk) when the
+/// request asked for it via `stream_options.include_usage`. Locates the
+/// `"usage"` key, then the `"total_tokens"` integer inside it, and parses its
+/// digits. Returns `None` when either key is absent (e.g. a normal delta chunk).
+pub fn extract_total_tokens(json: &str) -> Option<u32> {
+    let after = match json.find("\"usage\"") {
+        Some(i) => &json[i + "\"usage\"".len()..],
+        None => return None,
+    };
+    let key = match after.find("\"total_tokens\"") {
+        Some(i) => &after[i + "\"total_tokens\"".len()..],
+        None => return None,
+    };
+    // Skip the `:` and any whitespace, then read decimal digits.
+    let digits = key.trim_start_matches([':', ' ', '\t']);
+    let mut value: u32 = 0;
+    let mut seen = false;
+    for c in digits.chars() {
+        match c.to_digit(10) {
+            Some(d) => {
+                value = value.saturating_mul(10).saturating_add(d);
+                seen = true;
+            }
+            None => break,
+        }
+    }
+    if seen {
+        Some(value)
+    } else {
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -266,6 +301,23 @@ mod tests {
             r#"{"choices":[{"delta":{},"finish_reason":"stop"}]}"#,
             &mut out
         ));
+    }
+
+    #[test]
+    fn extracts_total_tokens_from_usage_chunk() {
+        let data = r#"{"choices":[],"usage":{"prompt_tokens":12,"completion_tokens":30,"total_tokens":42}}"#;
+        assert_eq!(extract_total_tokens(data), Some(42));
+    }
+
+    #[test]
+    fn no_total_tokens_in_normal_delta() {
+        let data = r#"{"choices":[{"delta":{"content":"hi"}}]}"#;
+        assert_eq!(extract_total_tokens(data), None);
+        // A usage object without total_tokens also yields None.
+        assert_eq!(
+            extract_total_tokens(r#"{"usage":{"prompt_tokens":5}}"#),
+            None
+        );
     }
 
     #[test]

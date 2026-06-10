@@ -135,9 +135,12 @@ impl<'a> OpenRouter<'a> {
         out.clear();
         out.push_str("{\"model\":\"").map_err(|_| ())?;
         out.push_str(self.model).map_err(|_| ())?;
+        // `stream_options.include_usage` asks the OpenAI-compatible endpoint to
+        // emit a final usage chunk carrying `total_tokens`; without it the stream
+        // never reports token counts.
         write!(
             out,
-            "\",\"max_tokens\":{},\"stream\":true,\"messages\":[",
+            "\",\"max_tokens\":{},\"stream\":true,\"stream_options\":{{\"include_usage\":true}},\"messages\":[",
             self.max_tokens
         )
         .map_err(|_| ())?;
@@ -209,7 +212,7 @@ mod tests {
         r.build_body("hi", &mut body).unwrap();
         assert_eq!(
             body.as_str(),
-            r#"{"model":"deepseek/deepseek-chat","max_tokens":1024,"stream":true,"messages":[{"role":"user","content":"hi"}]}"#
+            r#"{"model":"deepseek/deepseek-chat","max_tokens":1024,"stream":true,"stream_options":{"include_usage":true},"messages":[{"role":"user","content":"hi"}]}"#
         );
         assert_eq!(r.host(), "openrouter.ai");
         assert_eq!(r.path(), "/api/v1/chat/completions");
@@ -231,7 +234,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             b.as_str(),
-            r#"{"model":"m","max_tokens":1024,"stream":true,"messages":[{"role":"system","content":"be brief"},{"role":"user","content":"hi"},{"role":"assistant","content":"hello"},{"role":"user","content":"bye"}]}"#
+            r#"{"model":"m","max_tokens":1024,"stream":true,"stream_options":{"include_usage":true},"messages":[{"role":"system","content":"be brief"},{"role":"user","content":"hi"},{"role":"assistant","content":"hello"},{"role":"user","content":"bye"}]}"#
         );
     }
 
