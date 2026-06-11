@@ -494,10 +494,14 @@ impl Ui {
         (rows, max_rows)
     }
 
-    /// A simple vertical settings menu: a title bar plus a list of items, with
-    /// the `selected` row highlighted. Items are pre-formatted by the caller
-    /// (e.g. "Model: deepseek/deepseek-chat"). Long items are truncated to the
-    /// panel width. Used by the Settings mode.
+    /// A vertical settings menu: a title bar plus a list of items, with the
+    /// `selected` row highlighted. Items are pre-formatted by the caller (e.g.
+    /// "Model: deepseek/deepseek-chat") and truncated to the panel width.
+    ///
+    /// The list is taller than the screen (model/persona/tokens + quick prompts
+    /// + games + back), so it scrolls: only a window of rows is drawn, kept
+    /// around the cursor so the highlighted row is always visible, and `^`/`v`
+    /// hints mark when there's more above or below. Used by the Settings mode.
     pub fn menu<D>(
         target: &mut D,
         title: &str,
@@ -513,21 +517,45 @@ impl Ui {
 
         const COLS: usize = (WIDTH as usize) / 6;
         const LINE_H: i32 = 11;
-        let mut y = DRAFT_TOP + 3;
-        for (i, item) in items.iter().enumerate() {
-            let selected = i == selected;
-            // Build a "> item" / "  item" row, truncated to the panel width.
+        let top = DRAFT_TOP + 3;
+        let max_rows = ((HEIGHT as i32 - top) / LINE_H).max(1) as usize;
+
+        // Scroll so the selected row stays on screen: center it in the window,
+        // clamped so we never scroll past either end.
+        let start = if items.len() <= max_rows {
+            0
+        } else {
+            selected
+                .saturating_sub(max_rows / 2)
+                .min(items.len() - max_rows)
+        };
+        let end = (start + max_rows).min(items.len());
+
+        let mut y = top;
+        for i in start..end {
+            let is_sel = i == selected;
+            // Build a "> item" / "  item" row. Leave the last column free for the
+            // scroll hint so a full-width row can't collide with it.
             let mut row: String<COLS> = String::new();
-            let _ = row.push_str(if selected { ">" } else { " " });
-            for ch in item.chars() {
-                if row.len() >= COLS {
+            let _ = row.push_str(if is_sel { ">" } else { " " });
+            for ch in items[i].chars() {
+                if row.len() >= COLS - 1 {
                     break;
                 }
                 let _ = row.push(ch);
             }
-            let color = if selected { ACCENT } else { FG };
+            let color = if is_sel { ACCENT } else { FG };
             Self::text(target, &row, 2, y, color)?;
             y += LINE_H;
+        }
+
+        // "more above / below" markers in the right margin.
+        let hint_x = WIDTH as i32 - 8;
+        if start > 0 {
+            Self::text(target, "^", hint_x, top, DIM)?;
+        }
+        if end < items.len() {
+            Self::text(target, "v", hint_x, top + (max_rows as i32 - 1) * LINE_H, DIM)?;
         }
         Ok(())
     }
