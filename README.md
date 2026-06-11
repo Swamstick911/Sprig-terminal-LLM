@@ -44,40 +44,117 @@ tools/dict-builder/  host tool: turns a word-frequency corpus into the
 docs/specs/          design document
 ```
 
-## Configure, build & flash
+## Setup (from scratch)
 
-Prerequisites: Rust with the `thumbv6m-none-eabi` target, and `elf2uf2-rs`
-(`cargo install elf2uf2-rs`) for UF2 flashing — or `probe-rs` if you have a debug
-probe.
+Your WiFi name, WiFi password and API key get built **into** the firmware, so
+everyone builds their own copy. It sounds like a lot, but it's really just
+"install three tools, paste four lines, run two commands." Takes about 15
+minutes the first time.
 
-1. **Configure** (one-time). Copy the template to `config.rs` (which is
-   gitignored — your secrets never get committed) and fill it in:
+### 1. Install the tools (one time only)
+
+Works the same on Windows, macOS and Linux.
+
+1. **Install Rust** from <https://rustup.rs> (follow the prompts; accept the
+   defaults). When it finishes, close and reopen your terminal.
+2. **Add the chip the Sprig uses:**
    ```sh
-   cp firmware/src/config.example.rs firmware/src/config.rs
+   rustup target add thumbv6m-none-eabi
    ```
-   Set `WIFI_SSID`, `WIFI_PASSWORD`, an OpenRouter `API_KEY` (`sk-or-…`, from
-   <https://openrouter.ai/keys>), and `MODEL` (e.g. `openai/gpt-5` or
-   `deepseek/deepseek-chat`).
-
-2. **Build:**
+3. **Install the flashing tool:**
    ```sh
-   cd firmware
-   cargo build --release
+   cargo install elf2uf2-rs
    ```
 
-3. **Flash** (UF2): hold **BOOTSEL** while plugging in the Sprig so it mounts as
-   the `RPI-RP2` drive, then:
+### 2. Get the code
+
+```sh
+git clone https://github.com/Swamstick911/Sprig-terminal-LLM.git
+cd Sprig-terminal-LLM
+```
+
+### 3. Add your WiFi and API key
+
+Make your own config file from the template (it's gitignored, so your secrets
+are never uploaded):
+
+```sh
+cp firmware/src/config.example.rs firmware/src/config.rs
+```
+
+Open `firmware/src/config.rs` in any text editor and fill in the four values:
+
+- `WIFI_SSID` — your WiFi network name (must be **2.4 GHz**, the Pico can't see
+  5 GHz networks).
+- `WIFI_PASSWORD` — that network's password.
+- `API_KEY` — an OpenRouter key (starts with `sk-or-`). Make a free account at
+  <https://openrouter.ai>, then create a key at <https://openrouter.ai/keys>.
+  You'll need a little credit on the account for the model to reply.
+- `MODEL` — which AI to use, e.g. `openai/gpt-5` or `deepseek/deepseek-chat`.
+  Full list at <https://openrouter.ai/models>.
+
+### 4. Build it
+
+```sh
+cd firmware
+cargo build --release
+```
+
+The **first** build downloads and compiles a lot of code — give it a few
+minutes. Later builds are fast.
+
+### 5. Flash it onto the Sprig
+
+1. **Hold down the BOOTSEL button** on the Pico, and *while still holding it*,
+   plug the Sprig into your computer with USB. A new drive called **`RPI-RP2`**
+   appears — now you can let go.
+2. Turn the build into a `.uf2` file:
    ```sh
    elf2uf2-rs target/thumbv6m-none-eabi/release/sprig-llm-firmware sprig.uf2
-   # then copy sprig.uf2 onto the RPI-RP2 drive (drag-and-drop or cp)
    ```
-   With a debug probe instead, switch the runner in `firmware/.cargo/config.toml`
-   to `elf2uf2-rs -d` (or `probe-rs`) and run `cargo run --release`.
+3. **Copy `sprig.uf2` onto the `RPI-RP2` drive** (drag-and-drop works). The
+   Sprig reboots on its own and starts the terminal. That's it.
 
-Run the host-side logic tests:
+To put new firmware on later, just repeat step 5.
+
+### 6. Power it
+
+Once flashed it runs on its own — no computer needed. Power it from a USB wall
+charger or a power bank. (Plugging into a PC also works, and lets you use the
+"type the reply to my PC" button.)
+
+> **Heads up:** while a reply is generating the screen can flicker a little —
+> that's a brief power dip when the WiFi radio transmits. A good power bank or
+> wall charger keeps it steady; weak/old batteries make it worse. See
+> [Troubleshooting](#troubleshooting).
+
+---
+
+Optional — run the logic tests on your computer (no hardware needed):
+
 ```sh
 cargo test -p sprig-llm-core
 ```
+
+Got a debug probe? Switch the runner in `firmware/.cargo/config.toml` to
+`elf2uf2-rs -d` (or `probe-rs`) and just run `cargo run --release` instead of
+steps 4–5.
+
+## Troubleshooting
+
+- **No `RPI-RP2` drive appears.** Hold **BOOTSEL** *before* you plug in and keep
+  holding until the drive shows up. Try a different USB cable — some are
+  charge-only and don't carry data.
+- **The screen flickers while it's thinking.** Normal-ish: it's a power dip when
+  the radio transmits. Use a quality power bank or wall charger (not tired AA
+  batteries), or run it off your PC's USB for the steadiest power.
+- **It connects but never replies / shows an error.** Check three things: your
+  `API_KEY` is an OpenRouter `sk-or-` key, the OpenRouter account has some
+  credit, and `MODEL` is a full slug like `openai/gpt-5` (not just `gpt-5`).
+- **WiFi won't connect.** The Pico only sees **2.4 GHz** networks. Make sure
+  `WIFI_SSID`/`WIFI_PASSWORD` are for a 2.4 GHz network with WPA2.
+- **`cargo build` complains about the target.** Re-run
+  `rustup target add thumbv6m-none-eabi`.
 
 ## Controls
 
