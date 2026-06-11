@@ -711,13 +711,15 @@ where
                             break;
                         }
                     }
-                    // The redraw is a blocking full-screen SPI paint; doing it on
-                    // every token starves the WiFi/TCP tasks and drops the stream.
-                    // Repaint at most every ~24 new chars; the final paint below
-                    // always shows the complete reply.
+                    // The redraw is a blocking SPI paint; doing it on every token
+                    // starves the WiFi/TCP tasks and drops the stream. Repaint at
+                    // most every ~24 new chars. `response_stream` overwrites in
+                    // place (no full-screen clear) so the panel never flashes
+                    // while the reply is coming in; the final paint below shows
+                    // the complete reply with the token header.
                     if acc.len() >= painted_len + 24 {
                         painted_len = acc.len();
-                        let _ = Ui::response(lcd, "Streaming...", &acc);
+                        let _ = Ui::response_stream(lcd, "Streaming...", &acc);
                     }
                 },
             )
@@ -746,7 +748,9 @@ where
                 hdr.clear();
                 let _ = write!(hdr, "{}t/{}t  L=back", reply_tokens, *session_tokens);
             }
-            let _ = Ui::response(lcd, &hdr, &acc);
+            // In-place repaint (no clear) so the final frame doesn't flash either;
+            // only the header swaps from "Streaming..." to the token line.
+            let _ = Ui::response_stream(lcd, &hdr, &acc);
             Ok(acc)
         }
         Err(e) => {

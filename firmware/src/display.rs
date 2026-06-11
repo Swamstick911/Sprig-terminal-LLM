@@ -24,7 +24,7 @@
 use core::fmt::Write as _;
 
 use embedded_graphics::{
-    mono_font::{ascii::FONT_6X10, MonoTextStyle},
+    mono_font::{ascii::FONT_6X10, MonoTextStyle, MonoTextStyleBuilder},
     pixelcolor::Rgb565,
     prelude::*,
     primitives::{PrimitiveStyle, Rectangle},
@@ -320,6 +320,92 @@ impl Ui {
         let mut y = DRAFT_TOP + 2;
         for row in &rows[start..] {
             Text::with_baseline(row, Point::new(2, y), style, Baseline::Top).draw(target)?;
+            y += LINE_H;
+        }
+        Ok(())
+    }
+
+    /// Like [`response`] but built for the streaming hot-loop — it never blanks
+    /// the panel, so the screen doesn't flash between frames.
+    ///
+    /// [`response`] clears the whole screen (a ~40 KiB SPI fill) and then draws
+    /// the text back on top; repeated every chunk while a reply streams, that
+    /// blank-then-redraw is a visible flicker, and the big bus burst starves the
+    /// WiFi task. This version instead overwrites in place: the header and every
+    /// on-screen row are drawn with an *opaque* style (each glyph paints its own
+    /// background) and padded to the full column width, so a shorter line erases
+    /// whatever was under it. No clear, no flash, and a much smaller per-frame
+    /// write. The caller should paint one clean [`response`] first (to set the
+    /// margins) and then drive updates through this.
+    pub fn response_stream<D>(target: &mut D, header: &str, body: &str) -> Result<(), D::Error>
+    where
+        D: DrawTarget<Color = Rgb565>,
+    {
+        const COLS: usize = (WIDTH as usize) / 6;
+        const LINE_H: i32 = 11;
+        let max_rows = ((HEIGHT as i32 - (DRAFT_TOP + 2)) / LINE_H) as usize;
+
+        let body_style = MonoTextStyleBuilder::new()
+            .font(&FONT_6X10)
+            .text_color(FG)
+            .background_color(BG)
+            .build();
+        let header_style = MonoTextStyleBuilder::new()
+            .font(&FONT_6X10)
+            .text_color(ACCENT)
+            .background_color(BG)
+            .build();
+
+        // Header, padded to full width so a shorter header overwrites the old one.
+        let mut hdr: String<COLS> = String::new();
+        for ch in header.chars() {
+            if hdr.push(ch).is_err() {
+                break;
+            }
+        }
+        while hdr.len() < COLS && hdr.push(' ').is_ok() {}
+        Text::with_baseline(&hdr, Point::new(2, STATUS_TOP + 2), header_style, Baseline::Top)
+            .draw(target)?;
+        Self::hline(target, DRAFT_TOP - 1, DIM)?;
+
+        // Same tail-wrap as `response`: char-wrap, honor '\n', keep the last rows.
+        let mut rows: heapless::Vec<String<COLS>, 64> = heapless::Vec::new();
+        let mut cur: String<COLS> = String::new();
+        for ch in body.chars() {
+            if ch == '\n' || cur.len() >= COLS {
+                if rows.push(cur.clone()).is_err() {
+                    rows.remove(0);
+                    let _ = rows.push(cur.clone());
+                }
+                cur.clear();
+                if ch == '\n' {
+                    continue;
+                }
+            }
+            let _ = cur.push(ch);
+        }
+        if rows.push(cur.clone()).is_err() {
+            rows.remove(0);
+            let _ = rows.push(cur);
+        }
+
+        let start = rows.len().saturating_sub(max_rows);
+        let visible = &rows[start..];
+        let mut y = DRAFT_TOP + 2;
+        // Draw a full grid of `max_rows` rows every time, padding each to the
+        // column width and blanking any unused rows, so the body region is fully
+        // repainted in place without ever clearing the screen.
+        for i in 0..max_rows {
+            let mut line: String<COLS> = String::new();
+            if let Some(row) = visible.get(i) {
+                for ch in row.chars() {
+                    if line.push(ch).is_err() {
+                        break;
+                    }
+                }
+            }
+            while line.len() < COLS && line.push(' ').is_ok() {}
+            Text::with_baseline(&line, Point::new(2, y), body_style, Baseline::Top).draw(target)?;
             y += LINE_H;
         }
         Ok(())
