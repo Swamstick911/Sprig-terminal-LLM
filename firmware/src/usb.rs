@@ -59,9 +59,9 @@ const REPORT_LEN: usize = 8;
 const WRITE_TIMEOUT: Duration = Duration::from_millis(50);
 
 /// Inter-report delay so the host registers each press/release as a distinct
-/// event (and consecutive identical chars repeat). ~6 ms is comfortably above
-/// the 8 ms poll interval over a couple of polls.
-const KEY_DELAY: Duration = Duration::from_millis(6);
+/// event (and consecutive identical chars repeat). ~12 ms ensures at least
+/// one host poll (typically every 8 ms) sees each state.
+const KEY_DELAY: Duration = Duration::from_millis(12);
 
 /// Left-Shift modifier bit in a HID keyboard report's `modifier` byte.
 const MOD_LSHIFT: u8 = 0x02;

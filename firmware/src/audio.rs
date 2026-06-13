@@ -85,6 +85,7 @@ const CHIME_AMPLITUDE: i16 = 3200;
 pub struct Audio {
     sm: StateMachine<'static, PIO1, 0>,
     dma: PeripheralRef<'static, embassy_rp::dma::AnyChannel>,
+    volume: u8, // 0-10
 }
 
 impl Audio {
@@ -119,23 +120,37 @@ impl Audio {
         Self {
             sm,
             dma: dma.into_ref().map_into(),
+            volume: 5, // default 50%
         }
+    }
+
+    /// Set the volume (0-10 scale).
+    pub fn set_volume(&mut self, volume: u8) {
+        self.volume = volume.min(10);
     }
 
     /// Play a brief soft "key click" (~14 ms, 1 kHz). Awaits until the sound has
     /// been clocked out, then leaves the line silent.
     pub async fn play_click(&mut self) {
+        if self.volume == 0 {
+            return;
+        }
         let frames = ms_to_frames(CLICK_MS);
-        self.play_tone(CLICK_HZ, frames, AMPLITUDE, false).await;
+        let amp = (AMPLITUDE as i32 * self.volume as i32 / 10) as i16;
+        self.play_tone(CLICK_HZ, frames, amp, false).await;
         self.silence().await;
     }
 
     /// Play the short, gentle "reply ready" chime. Awaits until the whole chime
     /// has played, then leaves the line silent.
     pub async fn play_chime(&mut self) {
+        if self.volume == 0 {
+            return;
+        }
         let frames = ms_to_frames(CHIME_NOTE_MS);
+        let amp = (CHIME_AMPLITUDE as i32 * self.volume as i32 / 10) as i16;
         for &hz in CHIME_NOTES_HZ.iter() {
-            self.play_tone(hz, frames, CHIME_AMPLITUDE, true).await;
+            self.play_tone(hz, frames, amp, true).await;
         }
         self.silence().await;
     }

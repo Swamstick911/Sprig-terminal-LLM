@@ -502,17 +502,25 @@ impl Ui {
     /// + games + back), so it scrolls: only a window of rows is drawn, kept
     /// around the cursor so the highlighted row is always visible, and `^`/`v`
     /// hints mark when there's more above or below. Used by the Settings mode.
+    ///
+    /// `sliders` is a slice of (row_index, current_value_0_10) for specialized
+    /// rendering of numerical settings as progress bars.
     pub fn menu<D>(
         target: &mut D,
         title: &str,
         items: &[&str],
         selected: usize,
+        sliders: &[(usize, u8)],
     ) -> Result<(), D::Error>
     where
         D: DrawTarget<Color = Rgb565>,
     {
         target.clear(BG)?;
-        Self::text(target, title, 2, STATUS_TOP + 2, ACCENT)?;
+        // Title bar with background fill.
+        Rectangle::new(Point::new(0, 0), Size::new(WIDTH, DRAFT_TOP as u32 - 1))
+            .into_styled(PrimitiveStyle::with_fill(Rgb565::CSS_DARK_SLATE_GRAY))
+            .draw(target)?;
+        Self::text(target, title, 2, STATUS_TOP + 2, FG)?;
         Self::hline(target, DRAFT_TOP - 1, DIM)?;
 
         const COLS: usize = (WIDTH as usize) / 6;
@@ -534,8 +542,16 @@ impl Ui {
         let mut y = top;
         for i in start..end {
             let is_sel = i == selected;
-            // Build a "> item" / "  item" row. Leave the last column free for the
-            // scroll hint so a full-width row can't collide with it.
+            let color = if is_sel { ACCENT } else { FG };
+
+            if is_sel {
+                // Background highlight for the selected row.
+                Rectangle::new(Point::new(0, y - 1), Size::new(WIDTH, LINE_H as u32))
+                    .into_styled(PrimitiveStyle::with_fill(Rgb565::CSS_GRAY))
+                    .draw(target)?;
+            }
+
+            // Build a "> item" / "  item" row.
             let mut row: String<COLS> = String::new();
             let _ = row.push_str(if is_sel { ">" } else { " " });
             for ch in items[i].chars() {
@@ -544,8 +560,26 @@ impl Ui {
                 }
                 let _ = row.push(ch);
             }
-            let color = if is_sel { ACCENT } else { FG };
-            Self::text(target, &row, 2, y, color)?;
+            Self::text(target, &row, 2, y, if is_sel { BG } else { color })?;
+
+            // If this row is a slider, draw a bar on the right.
+            if let Some(&(_, val)) = sliders.iter().find(|(idx, _)| *idx == i) {
+                let bar_w = 40u32;
+                let bar_x = WIDTH as i32 - bar_w as i32 - 10;
+                let fill_w = (bar_w * val as u32) / 10;
+                
+                // Track.
+                Rectangle::new(Point::new(bar_x, y + 3), Size::new(bar_w, 4))
+                    .into_styled(PrimitiveStyle::with_stroke(if is_sel { BG } else { DIM }, 1))
+                    .draw(target)?;
+                // Handle.
+                if val > 0 {
+                    Rectangle::new(Point::new(bar_x, y + 3), Size::new(fill_w, 4))
+                        .into_styled(PrimitiveStyle::with_fill(if is_sel { BG } else { ACCENT }))
+                        .draw(target)?;
+                }
+            }
+
             y += LINE_H;
         }
 

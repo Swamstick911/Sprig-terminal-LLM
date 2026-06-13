@@ -35,6 +35,7 @@ mod usb;
 use defmt::info;
 use embassy_executor::Spawner;
 use embassy_rp::gpio::{AnyPin, Level, Output, Pin};
+use embassy_rp::pwm::{Config as PwmConfig, Pwm};
 use embassy_rp::spi::{self, Spi};
 use embassy_time::{Delay, Duration, Timer};
 use embedded_hal_bus::spi::ExclusiveDevice;
@@ -60,7 +61,7 @@ const EXPAND_PREFIX: &str =
 
 /// Capacity for the accumulated, on-screen LLM response. The response view only
 /// renders the visible tail, so this just bounds total retained text.
-const RESPONSE_CAP: usize = 2048;
+const RESPONSE_CAP: usize = 4096;
 
 /// Max prompt length: the 256-char draft plus the Expand instruction prefix.
 const PROMPT_CAP: usize = 512;
@@ -91,7 +92,7 @@ const PERSONAS: &[(&str, Option<&str>)] = &[
 ];
 
 /// Selectable response length caps (max_tokens).
-const MAX_TOKENS: &[u32] = &[256, 512, 1024, 2048];
+const MAX_TOKENS: &[u32] = &[256, 512, 1024, 2048, 4096];
 
 /// One stored conversation turn.
 type Turn = (Role, HString<TURN_CAP>);
@@ -102,6 +103,8 @@ struct Settings {
     model: usize,
     persona: usize,
     max_tokens: usize,
+    brightness: u8, // 0-10
+    volume: u8,     // 0-10
     /// Highlighted menu row (for navigation).
     cursor: usize,
     /// Transient per-session system-prompt override set by starting a game from
@@ -115,6 +118,8 @@ impl Settings {
             model: 0,
             persona: 0,
             max_tokens: 2, // default 1024
+            brightness: 10,
+            volume: 5,
             cursor: 0,
             system_override: None,
         }
@@ -171,9 +176,11 @@ const GAMES: &[(&str, &str, &str)] = &[
 const ROW_MODEL: usize = 0;
 const ROW_PERSONA: usize = 1;
 const ROW_TOKENS: usize = 2;
-const ROW_NEWCONV: usize = 3;
+const ROW_BRIGHTNESS: usize = 3;
+const ROW_VOLUME: usize = 4;
+const ROW_NEWCONV: usize = 5;
 /// Quick-prompt rows occupy `[QUICK_BASE, QUICK_BASE + QUICK_PROMPTS.len())`.
-const QUICK_BASE: usize = 4;
+const QUICK_BASE: usize = 6;
 /// Game rows occupy `[GAMES_BASE, GAMES_BASE + GAMES.len())`, after the quick
 /// prompts and before Back.
 const GAMES_BASE: usize = QUICK_BASE + QUICK_PROMPTS.len();
@@ -229,8 +236,13 @@ async fn main(spawner: Spawner) {
     let dc = Output::new(p.PIN_22, Level::Low); // pins::display::DC
     let rst = Output::new(p.PIN_26, Level::Low); // pins::display::RST
     let cs = Output::new(p.PIN_20, Level::High); // pins::display::CS (idle high)
-    // Backlight on.
-    let _backlight = Output::new(p.PIN_17, Level::High); // pins::display::BACKLIGHT
+
+    // Backlight PWM on PIN_17.
+    let mut pwm_cfg = PwmConfig::default();
+    pwm_cfg.enable = true;
+    pwm_cfg.top = 1000;
+    pwm_cfg.compare_b = 1000;
+    let mut backlight = Pwm::new_output_b(p.PWM_SLICE0, p.PIN_17, pwm_cfg);
 
     // `st7735-lcd` 0.10 wants an embedded-hal `SpiDevice` (CS managed per
     // transaction). Wrap our raw blocking bus + CS pin in an ExclusiveDevice.
@@ -332,12 +344,22 @@ async fn main(spawner: Spawner) {
         if (saved.max_tokens as usize) < MAX_TOKENS.len() {
             settings.max_tokens = saved.max_tokens as usize;
         }
+        settings.brightness = saved.brightness.clamp(1, 10);
+        settings.volume = saved.volume.min(10);
         for (role_u8, text) in saved.turns {
             // `push_turn` truncates to TURN_CAP and drops oldest when full.
             push_turn(&mut history, storage::role_from_u8(role_u8), &text);
         }
         info!("storage: restored {} turn(s)", history.len());
     }
+
+    // Apply initial brightness and volume.
+    let mut pwm_cfg = PwmConfig::default();
+    pwm_cfg.enable = true;
+    pwm_cfg.top = 1000;
+    pwm_cfg.compare_b = (settings.brightness as u16) * 100;
+    backlight.set_config(&pwm_cfg);
+    audio.set_volume(settings.volume);
 
     let mut mode = Mode::Composing;
     // Holds the most recent finished reply, for scrolling in ShowingResponse.
@@ -433,52 +455,85 @@ async fn main(spawner: Spawner) {
                                 settings.cursor = (settings.cursor + 1) % MENU_ROWS;
                                 redraw = true;
                             }
-                            Button::A | Button::L | Button::D => {
-                                // Activate / change the highlighted row's value.
+                            Button::D | Button::L => {
+                                // Increase value.
                                 match settings.cursor {
                                     ROW_MODEL => {
-                                        settings.model =
-                                            (settings.model + 1) % MODELS.len();
+                                        settings.model = (settings.model + 1) % MODELS.len();
                                         save_now = true;
                                     }
                                     ROW_PERSONA => {
-                                        settings.persona =
-                                            (settings.persona + 1) % PERSONAS.len();
-                                        // Choosing a persona ends any game mode so
-                                        // normal chat resumes.
+                                        settings.persona = (settings.persona + 1) % PERSONAS.len();
                                         settings.system_override = None;
                                         save_now = true;
                                     }
                                     ROW_TOKENS => {
-                                        settings.max_tokens =
-                                            (settings.max_tokens + 1) % MAX_TOKENS.len();
+                                        settings.max_tokens = (settings.max_tokens + 1) % MAX_TOKENS.len();
                                         save_now = true;
+                                    }
+                                    ROW_BRIGHTNESS => {
+                                        if settings.brightness < 10 {
+                                            settings.brightness += 1;
+                                            let mut pwm_cfg = PwmConfig::default();
+                                            pwm_cfg.enable = true;
+                                            pwm_cfg.top = 1000;
+                                            pwm_cfg.compare_b = (settings.brightness as u16) * 100;
+                                            backlight.set_config(&pwm_cfg);
+                                            save_now = true;
+                                        }
+                                    }
+                                    ROW_VOLUME => {
+                                        if settings.volume < 10 {
+                                            settings.volume += 1;
+                                            audio.set_volume(settings.volume);
+                                            let _ = audio.play_click().await;
+                                            save_now = true;
+                                        }
                                     }
                                     ROW_NEWCONV => {
                                         history.clear();
-                                        // A fresh conversation also leaves game mode.
                                         settings.system_override = None;
                                         save_now = true;
                                         let _ = audio.play_click().await;
                                     }
                                     ROW_BACK => exit = true,
                                     q if q >= QUICK_BASE && q < GAMES_BASE => {
-                                        // Load the canned prompt into the draft and
-                                        // return to the keyboard to edit / send it.
                                         kb.set_text(QUICK_PROMPTS[q - QUICK_BASE].1);
                                         exit = true;
                                     }
                                     q if q >= GAMES_BASE && q < ROW_BACK => {
-                                        // Start a game: set the transient system
-                                        // override, clear history, prime the draft
-                                        // with the kickoff line, and exit to the
-                                        // keyboard so the user just presses Send.
                                         let (_, sys, kick) = GAMES[q - GAMES_BASE];
                                         settings.system_override = Some(sys);
                                         history.clear();
                                         kb.set_text(kick);
                                         save_now = true;
                                         exit = true;
+                                    }
+                                    _ => {}
+                                }
+                                redraw = true;
+                            }
+                            Button::A | Button::J => {
+                                // Decrease value (for sliders).
+                                match settings.cursor {
+                                    ROW_BRIGHTNESS => {
+                                        if settings.brightness > 1 {
+                                            settings.brightness -= 1;
+                                            let mut pwm_cfg = PwmConfig::default();
+                                            pwm_cfg.enable = true;
+                                            pwm_cfg.top = 1000;
+                                            pwm_cfg.compare_b = (settings.brightness as u16) * 100;
+                                            backlight.set_config(&pwm_cfg);
+                                            save_now = true;
+                                        }
+                                    }
+                                    ROW_VOLUME => {
+                                        if settings.volume > 0 {
+                                            settings.volume -= 1;
+                                            audio.set_volume(settings.volume);
+                                            let _ = audio.play_click().await;
+                                            save_now = true;
+                                        }
                                     }
                                     _ => {}
                                 }
@@ -604,6 +659,10 @@ where
     let _ = write!(persona_row, "Persona: {}", PERSONAS[settings.persona].0);
     let mut tokens_row: HString<24> = HString::new();
     let _ = write!(tokens_row, "Max tokens: {}", settings.max_tokens());
+    let mut bright_row: HString<24> = HString::new();
+    let _ = write!(bright_row, "Brightness");
+    let mut volume_row: HString<24> = HString::new();
+    let _ = write!(volume_row, "Volume");
     let mut newconv_row: HString<32> = HString::new();
     let _ = write!(newconv_row, "New conversation ({})", history.len());
 
@@ -611,6 +670,8 @@ where
     let _ = items.push(model_row.as_str());
     let _ = items.push(persona_row.as_str());
     let _ = items.push(tokens_row.as_str());
+    let _ = items.push(bright_row.as_str());
+    let _ = items.push(volume_row.as_str());
     let _ = items.push(newconv_row.as_str());
     for (name, _) in QUICK_PROMPTS {
         let _ = items.push(name);
@@ -619,7 +680,12 @@ where
         let _ = items.push(label);
     }
     let _ = items.push("Back");
-    let _ = Ui::menu(lcd, "Settings (A/L/D=use/change)", &items, settings.cursor);
+
+    let sliders = [
+        (ROW_BRIGHTNESS, settings.brightness),
+        (ROW_VOLUME, settings.volume),
+    ];
+    let _ = Ui::menu(lcd, "Settings (D=+, A=-)", &items, settings.cursor, &sliders);
 }
 
 /// Snapshot the current settings + history into flash. Call ONLY at quiescent
@@ -636,6 +702,8 @@ fn persist(flash: &mut storage::Flash, settings: &Settings, history: &[Turn]) {
         model: settings.model as u8,
         persona: settings.persona as u8,
         max_tokens: settings.max_tokens as u8,
+        brightness: settings.brightness,
+        volume: settings.volume,
         turns,
     };
     storage::save(flash, &data);

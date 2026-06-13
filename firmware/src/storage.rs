@@ -83,7 +83,7 @@ pub type Flash<'d> = embassy_rp::flash::Flash<'d, FLASH, Blocking, FLASH_CHIP_SI
 // ---------------------------------------------------------------------------
 
 const MAGIC: [u8; 4] = *b"SPRG";
-const STORAGE_VERSION: u8 = 1;
+const STORAGE_VERSION: u8 = 2;
 
 /// Fixed header bytes preceding the payload: magic(4) + version(1) +
 /// payload_len(2) + crc32(4).
@@ -134,6 +134,8 @@ pub struct Persisted {
     pub model: u8,
     pub persona: u8,
     pub max_tokens: u8,
+    pub brightness: u8, // 0-10
+    pub volume: u8,     // 0-10
     pub turns: HVec<(u8, HString<TURN_CAP>), MAX_TURNS>,
 }
 
@@ -176,8 +178,9 @@ pub fn load(flash: &mut Flash<'_>) -> Option<Persisted> {
         // Blank/garbage sector — expected on first boot. Not an error.
         return None;
     }
-    if buf[4] != STORAGE_VERSION {
-        defmt::info!("storage: version {} != {}, ignoring", buf[4], STORAGE_VERSION);
+    let version = buf[4];
+    if version != STORAGE_VERSION && version != 1 {
+        defmt::info!("storage: version {} != {}, ignoring", version, STORAGE_VERSION);
         return None;
     }
     let payload_len = u16::from_le_bytes([buf[5], buf[6]]) as usize;
@@ -198,10 +201,14 @@ pub fn load(flash: &mut Flash<'_>) -> Option<Persisted> {
     let model = payload[0];
     let persona = payload[1];
     let max_tokens = payload[2];
-    let turn_count = payload[3] as usize;
+    let (brightness, volume, turn_count, mut cur) = if version >= 2 && payload_len >= 6 {
+        (payload[3], payload[4], payload[5] as usize, 6usize)
+    } else {
+        // Fallback for version 1: fixed 4-byte header (model, persona, tokens, count)
+        (10u8, 5u8, payload[3] as usize, 4usize)
+    };
 
     let mut turns: HVec<(u8, HString<TURN_CAP>), MAX_TURNS> = HVec::new();
-    let mut cur = 4usize;
     for _ in 0..turn_count {
         if turns.is_full() {
             break; // never trust a count larger than capacity
@@ -237,6 +244,8 @@ pub fn load(flash: &mut Flash<'_>) -> Option<Persisted> {
         model,
         persona,
         max_tokens,
+        brightness,
+        volume,
         turns,
     })
 }
@@ -258,8 +267,10 @@ pub fn save(flash: &mut Flash<'_>, data: &Persisted) {
     buf[cur] = data.model;
     buf[cur + 1] = data.persona;
     buf[cur + 2] = data.max_tokens;
-    let count_idx = cur + 3; // filled in after we know how many turns fit
-    cur += 4;
+    buf[cur + 3] = data.brightness;
+    buf[cur + 4] = data.volume;
+    let count_idx = cur + 5; // filled in after we know how many turns fit
+    cur += 6;
 
     let mut written_turns: u8 = 0;
     for (role, text) in &data.turns {
