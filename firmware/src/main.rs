@@ -539,7 +539,6 @@ async fn main(spawner: Spawner) {
                                 }
                                 redraw = true;
                             }
-                            _ => {}
                         }
                     }
                 }
